@@ -13,7 +13,6 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
-  Waves,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchPersonalCockpit } from '../lib/api';

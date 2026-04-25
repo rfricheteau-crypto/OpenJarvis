@@ -1,6 +1,7 @@
 import { EnergyDashboard } from '../components/Dashboard/EnergyDashboard';
 import { CostComparison } from '../components/Dashboard/CostComparison';
 import { TraceDebugger } from '../components/Dashboard/TraceDebugger';
+import { ExternalLink } from 'lucide-react';
 
 export function DashboardPage() {
   const now = new Date();
@@ -14,8 +15,25 @@ export function DashboardPage() {
             <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>
               System Overview
             </h1>
-            <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-              {stamp}
+            <div className="flex items-center gap-3">
+              <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                {stamp}
+              </div>
+              <a
+                href="/graphify/jarvis"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+                style={{
+                  background: 'var(--color-accent)',
+                  border: '1px solid var(--color-accent)',
+                  color: 'var(--color-on-accent)',
+                  boxShadow: 'var(--shadow-sm)',
+                }}
+              >
+                <ExternalLink size={14} />
+                Graphify
+              </a>
             </div>
           </div>
           <p className="text-sm mt-2 max-w-2xl" style={{ color: 'var(--color-text-secondary)' }}>
