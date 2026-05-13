@@ -1,22 +1,42 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useNavigate } from 'react-router';
 import {
   AlertTriangle,
+  Bell,
+  BookOpen,
+  Brain,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
+  Circle,
   Copy,
   Clock3,
+  Layers,
+  Lightbulb,
   Loader2,
   Mail,
   Mic,
   MoveRight,
+  Plus,
   Radio,
   RefreshCw,
+  GitBranch,
+  TrendingUp,
   ShieldCheck,
   Sparkles,
+  Trash2,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchPersonalCockpit } from '../lib/api';
-import type { PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
+import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot } from '../lib/api';
+import type { AdvSnapshot } from '../lib/api';
+import type { PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
+import { HermesChatPanel } from '../components/Hermes/HermesChatPanel';
+
+function isRecord(value: unknown): value is PersonalCockpitRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function fmtDate(value?: string) {
   if (!value) return 'n/a';
@@ -30,6 +50,20 @@ function fmtAgo(seconds?: number | null) {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
   return `${Math.floor(seconds / 3600)} h`;
+}
+
+function fmtUsd(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return 'n/a';
+  return `${value.toFixed(2)} $`;
+}
+
+function budgetFlag(ratio?: number, level?: string) {
+  const value = ratio || 0;
+  if (level === 'blocked' || value >= 1) return { label: 'Budget bloqué', tone: 'error' as const };
+  if (value >= 0.95) return { label: 'Alerte 95 %', tone: 'error' as const };
+  if (value >= 0.8) return { label: 'Alerte 80 %', tone: 'warning' as const };
+  if (value >= 0.5) return { label: 'Alerte 50 %', tone: 'warning' as const };
+  return { label: 'Budget sain', tone: 'ok' as const };
 }
 
 function toneFromText(value: string) {
@@ -335,6 +369,57 @@ function CompactRecord({
   );
 }
 
+function compactValuePreview(value: unknown) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return `${value.length} élément(s)`;
+  if (!isRecord(value)) return '';
+  const preferredKeys = ['request', 'title', 'action', 'decision', 'tool', 'status', 'summary', 'label', 'intent'];
+  for (const key of preferredKeys) {
+    const candidate = value[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  const keys = Object.keys(value);
+  return keys.length ? `objet (${keys.slice(0, 3).join(', ')})` : 'objet vide';
+}
+
+function OrchestratorRecordCard({
+  title,
+  payload,
+}: {
+  title: string;
+  payload?: unknown;
+}) {
+  const preview = compactValuePreview(payload);
+  return (
+    <div
+      className="rounded-2xl px-4 py-4"
+      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+    >
+      <div className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+        {title}
+      </div>
+      <div className="text-sm" style={{ color: preview ? 'var(--color-text)' : 'var(--color-text-tertiary)' }}>
+        {preview || 'Absent pour le moment.'}
+      </div>
+      {isRecord(payload) && Object.keys(payload).length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs" style={{ color: 'var(--color-accent)' }}>
+            Voir le payload
+          </summary>
+          <pre
+            className="text-xs mt-3 whitespace-pre-wrap break-words rounded-xl px-3 py-3 overflow-x-auto"
+            style={{ background: 'var(--color-surface)', color: 'var(--color-text-secondary)' }}
+          >
+            {JSON.stringify(payload, null, 2)}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function PendingValidationCard({
   pending,
 }: {
@@ -356,7 +441,7 @@ function PendingValidationCard({
           </div>
         </div>
         <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
-          Ruth n’a rien à confirmer vocalement au moment du snapshot.
+          Ruth n'a rien à confirmer vocalement au moment du snapshot.
         </div>
       </div>
     );
@@ -632,10 +717,1805 @@ function ActionButton({
   );
 }
 
+function deriveHermesStatus(data: PersonalCockpitSnapshot): 'active' | 'idle' | 'offline' {
+  const overall = String(data.hermes?.overall || data.general_state?.status || '').toLowerCase();
+  if (overall.includes('ok') || overall.includes('active') || overall.includes('recent') || overall.includes('executed'))
+    return 'active';
+  if (overall.includes('pending') || overall.includes('idle') || overall.includes('pause') || overall.includes('warning'))
+    return 'idle';
+  if (!data.hermes?.overall && !data.general_state?.status) return 'offline';
+  return 'idle';
+}
+
+const HERMES_STATUS_CONFIG = {
+  active: {
+    label: 'Actif',
+    color: 'var(--color-success)',
+    bg: 'color-mix(in srgb, var(--color-success) 14%, transparent)',
+    pulse: true,
+  },
+  idle: {
+    label: 'En attente',
+    color: 'var(--color-warning)',
+    bg: 'color-mix(in srgb, var(--color-warning) 14%, transparent)',
+    pulse: false,
+  },
+  offline: {
+    label: 'Hors ligne',
+    color: 'var(--color-text-tertiary)',
+    bg: 'color-mix(in srgb, var(--color-text-tertiary) 14%, transparent)',
+    pulse: false,
+  },
+} as const;
+
+function HermesPanel({
+  data,
+  onReply,
+}: {
+  data: PersonalCockpitSnapshot;
+  onReply: () => void;
+}) {
+  const status = deriveHermesStatus(data);
+  const cfg = HERMES_STATUS_CONFIG[status];
+
+  const lastMessage = (
+    String(data.hermes?.last_summary || '').trim() ||
+    String(data.priority_lane?.detail || '').trim() ||
+    String(data.general_state?.last_response || '').trim() ||
+    "Hermès surveille. Aucune alerte ni résumé récent."
+  );
+
+  const recommendedAction = (
+    String(data.hermes?.last_recommended_action || '').trim() ||
+    String(data.general_state?.last_recommended_action || '').trim()
+  );
+
+  const nextActions = Array.isArray(data.hermes?.next_actions)
+    ? (data.hermes!.next_actions as Array<{ label?: string; why?: string }>).slice(0, 2)
+    : [];
+
+  return (
+    <div
+      className="hud-panel overflow-hidden"
+      style={{
+        background:
+          'linear-gradient(160deg, color-mix(in srgb, var(--color-accent-purple) 8%, var(--color-surface)) 0%, var(--color-surface) 60%)',
+        border: '1px solid color-mix(in srgb, var(--color-accent-purple) 18%, transparent)',
+      }}
+    >
+      {/* Header row */}
+      <div className="flex items-center justify-between px-5 pt-5 pb-4">
+        <div className="flex items-center gap-2.5">
+          <div
+            className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+            style={{
+              background: 'color-mix(in srgb, var(--color-accent-purple) 18%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-accent-purple) 28%, transparent)',
+            }}
+          >
+            <Sparkles size={15} style={{ color: 'var(--color-accent-purple)' }} />
+          </div>
+          <span
+            className="text-sm font-semibold tracking-[0.14em] uppercase"
+            style={{ color: 'var(--color-text)' }}
+          >
+            {"Hermès me parle"}
+          </span>
+        </div>
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
+          style={{ background: cfg.bg, color: cfg.color }}
+        >
+          <span className="relative flex h-1.5 w-1.5">
+            {cfg.pulse && (
+              <span
+                className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-70"
+                style={{ background: cfg.color }}
+              />
+            )}
+            <span
+              className="relative inline-flex rounded-full h-1.5 w-1.5"
+              style={{ background: cfg.color }}
+            />
+          </span>
+          {cfg.label}
+        </div>
+      </div>
+
+      {/* Message bubble */}
+      <div className="px-5 pb-2">
+        <div
+          className="rounded-2xl px-4 py-4 mb-4"
+          style={{
+            background: 'color-mix(in srgb, var(--color-accent-purple) 6%, var(--color-bg-secondary))',
+            border: '1px solid color-mix(in srgb, var(--color-accent-purple) 12%, transparent)',
+          }}
+        >
+          <ExpandableText
+            text={lastMessage}
+            emptyLabel={"Hermès surveille. Aucune alerte récente."}
+            maxChars={260}
+          />
+        </div>
+
+        {/* Recommended action */}
+        {recommendedAction && (
+          <div className="mb-4">
+            <div
+              className="text-[10px] uppercase tracking-[0.18em] mb-1.5"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              {"Action recommandée"}
+            </div>
+            <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+              {recommendedAction}
+            </div>
+          </div>
+        )}
+
+        {/* Next actions */}
+        {nextActions.length > 0 && (
+          <div className="mb-4">
+            <div
+              className="text-[10px] uppercase tracking-[0.18em] mb-2"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              {"Prochaines actions"}
+            </div>
+            <div className="space-y-1.5">
+              {nextActions.map((action, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 text-sm"
+                  style={{ color: 'var(--color-text-secondary)' }}
+                >
+                  <span style={{ color: 'var(--color-accent-purple)' }}>›</span>
+                  <span>{String(action.label || action.why || '')}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Actions footer */}
+        <div className="flex items-center gap-3 pb-5">
+          <button
+            onClick={onReply}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium cursor-pointer"
+            style={{
+              background: 'var(--color-accent-purple)',
+              color: '#fff',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.88')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            <Sparkles size={14} />
+            {"Répondre à Hermès"}
+          </button>
+          <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+            {"🎤 Vocal bientôt disponible"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Projects ────────────────────────────────────────────────────────────────
+
+// ADV_KPI_MOCK — valeurs fallback jusqu'à connexion réelle Stripe + Firebase
+const ADV_KPI_MOCK = {
+  mrr: '0 €',
+  subscriptions: 17,
+  users: 21,
+  churn: '0 %',
+  launch: 'pré-lancement',
+  quotesGenerated: 42,
+  invoicesGenerated: 18,
+  creditsConsumed: '1 240',
+  mainIssue: 'Vérifier Stripe live · Brevo DNS · emails transactionnels',
+  nextAction: 'Activer Stripe live et valider un paiement test',
+} as const;
+
+// GRAPHIFY_MOCK — valeurs fallback jusqu'au prochain scan
+const GRAPHIFY_MOCK = {
+  lastScan: '—',
+  orphanNotes: '—',
+  duplicates: '—',
+  weakLinks: '—',
+  nextAction: 'Lancer /graphify sur le vault ADV',
+} as const;
+
+// OBSIDIAN_MOCK — valeurs fallback
+const OBSIDIAN_MOCK = {
+  ideasInbox: '—',
+  toClassify: '—',
+  lastStateUpdate: '—',
+  memoryHealth: 'À vérifier',
+} as const;
+
+// VALENA_MOCK — valeurs fallback
+const VALENA_MOCK = {
+  status: 'conception',
+  nextStep: 'Définir le MVP vocal',
+  pendingDocs: '—',
+} as const;
+
+const PROJECTS_STORAGE_KEY = 'ruth_project_statuses';
+
+type ProjectStatus = 'active' | 'pause' | 'alert';
+
+interface ProjectDef {
+  id: string;
+  name: string;
+  tagline: string;
+  accent: string;
+  defaultStatus: ProjectStatus;
+  kpiLabel: string;
+  kpiValue: string;
+}
+
+const PROJECT_DEFS: ProjectDef[] = [
+  {
+    id: 'adv',
+    name: 'ADV',
+    tagline: "Facturation vocale pour artisans",
+    accent: 'var(--color-success)',
+    defaultStatus: 'active',
+    kpiLabel: 'MRR',
+    kpiValue: ADV_KPI_MOCK.mrr,
+  },
+  {
+    id: 'jarvis',
+    name: 'Jarvis / Hermès',
+    tagline: "Cockpit personnel et assistant vocal",
+    accent: 'var(--color-accent-purple)',
+    defaultStatus: 'active',
+    kpiLabel: 'Version active',
+    kpiValue: 'V4 stable',
+  },
+  {
+    id: 'graphify',
+    name: 'Graphify',
+    tagline: "Cartographie du vault Obsidian",
+    accent: 'var(--color-accent)',
+    defaultStatus: 'active',
+    kpiLabel: 'Dernier scan',
+    kpiValue: GRAPHIFY_MOCK.lastScan,
+  },
+  {
+    id: 'obsidian',
+    name: 'Obsidian',
+    tagline: "Second brain et mémoire durable",
+    accent: 'var(--color-accent-purple)',
+    defaultStatus: 'active',
+    kpiLabel: 'Santé mémoire',
+    kpiValue: OBSIDIAN_MOCK.memoryHealth,
+  },
+  {
+    id: 'valena',
+    name: 'Valéna',
+    tagline: "Assistante vocale IA",
+    accent: '#F87171',
+    defaultStatus: 'pause',
+    kpiLabel: 'Statut',
+    kpiValue: VALENA_MOCK.status,
+  },
+  {
+    id: 'abg',
+    name: 'ABG',
+    tagline: "Projet en cours",
+    accent: 'var(--color-accent)',
+    defaultStatus: 'pause',
+    kpiLabel: 'Statut',
+    kpiValue: 'En pause',
+  },
+];
+
+const PROJECT_STATUS_CYCLE: Record<ProjectStatus, ProjectStatus> = {
+  active: 'pause',
+  pause: 'alert',
+  alert: 'active',
+};
+
+const PROJECT_STATUS_CONFIG: Record<ProjectStatus, { label: string; color: string }> = {
+  active: { label: 'Actif', color: 'var(--color-success)' },
+  pause: { label: 'En pause', color: 'var(--color-text-tertiary)' },
+  alert: { label: 'Alerte', color: 'var(--color-warning)' },
+};
+
+function ProjectCard({
+  project,
+  status,
+  alertCount,
+  lastActivity,
+  onStatusClick,
+}: {
+  project: ProjectDef;
+  status: ProjectStatus;
+  alertCount: number;
+  lastActivity: string;
+  onStatusClick: () => void;
+}) {
+  const cfg = PROJECT_STATUS_CONFIG[status];
+  const navigate = useNavigate();
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate(`/jarvis-personal/project/${project.id}`)}
+      onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/jarvis-personal/project/${project.id}`); }}
+      className="hud-panel p-5 flex flex-col gap-3 cursor-pointer"
+      style={{
+        background: `linear-gradient(160deg, color-mix(in srgb, ${project.accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
+        border: `1px solid color-mix(in srgb, ${project.accent} 16%, transparent)`,
+      }}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-sm leading-tight" style={{ color: 'var(--color-text)' }}>
+            {project.name}
+          </div>
+          <div className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-tertiary)' }}>
+            {project.tagline}
+          </div>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onStatusClick(); }}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+          style={{
+            background: `color-mix(in srgb, ${cfg.color} 14%, transparent)`,
+            color: cfg.color,
+            border: `1px solid color-mix(in srgb, ${cfg.color} 22%, transparent)`,
+          }}
+          title={"Clic pour changer le statut"}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+        >
+          <span className="inline-block rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+          {cfg.label}
+        </button>
+      </div>
+
+      {/* KPI */}
+      <div
+        className="rounded-xl px-3 py-2.5"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div
+          className="text-[10px] uppercase tracking-[0.14em] mb-0.5"
+          style={{ color: 'var(--color-text-tertiary)' }}
+        >
+          {project.kpiLabel}
+        </div>
+        <div className="text-sm font-semibold" style={{ color: project.accent }}>
+          {project.kpiValue}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between mt-auto">
+        <div
+          className="text-xs"
+          style={{ color: alertCount > 0 ? 'var(--color-warning)' : 'var(--color-text-tertiary)' }}
+        >
+          {alertCount > 0 ? `⚠ ${alertCount} alerte${alertCount > 1 ? 's' : ''}` : '✓ Aucune alerte'}
+        </div>
+        <div className="text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+          {lastActivity}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const LIVE_STATUS_LABELS: Record<string, string> = {
+  active_window: 'Actif',
+  recently_active: 'Récemment actif',
+  idle: 'En veille',
+  paused: 'En pause',
+};
+
+function JarvisProjectCard({
+  status,
+  onStatusClick,
+  cockpitData,
+}: {
+  status: ProjectStatus;
+  onStatusClick: () => void;
+  cockpitData: PersonalCockpitSnapshot;
+}) {
+  const navigate = useNavigate();
+  const cfg = PROJECT_STATUS_CONFIG[status];
+  const accent = 'var(--color-accent)';
+
+  const hermes = cockpitData.hermes ?? {};
+  const gs = cockpitData.general_state;
+  const activeIntent = (hermes.active_intent ?? gs.active_intent ?? '—').replace(/_/g, ' ');
+  const lastSkill = hermes.last_skill_run as Record<string, unknown> | null | undefined;
+  const lastSkillLabel = String(lastSkill?.label ?? lastSkill?.skill ?? '—');
+  const liveStatus = LIVE_STATUS_LABELS[gs.live_status] ?? gs.live_status ?? '—';
+  const alertCount = cockpitData.alerts.filter((a) => a.level === 'warning' || a.level === 'error').length;
+  const lastActivity = gs.age_seconds != null ? `${fmtAgo(gs.age_seconds)} ago` : '—';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate('/jarvis-personal/project/jarvis')}
+      onKeyDown={(e) => { if (e.key === 'Enter') navigate('/jarvis-personal/project/jarvis'); }}
+      className="hud-panel p-5 flex flex-col gap-3 h-full cursor-pointer"
+      style={{
+        background: `linear-gradient(160deg, color-mix(in srgb, ${accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
+        border: `1px solid color-mix(in srgb, ${accent} 16%, transparent)`,
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-sm flex items-center gap-1.5" style={{ color: 'var(--color-text)' }}>
+            <Brain size={13} style={{ color: accent }} />
+            Jarvis / Hermès
+          </div>
+          <div className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-tertiary)' }}>
+            Orchestrateur et mémoire IA
+          </div>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onStatusClick(); }}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+          style={{
+            background: `color-mix(in srgb, ${cfg.color} 14%, transparent)`,
+            color: cfg.color,
+            border: `1px solid color-mix(in srgb, ${cfg.color} 22%, transparent)`,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+        >
+          <span className="inline-block rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+          {cfg.label}
+        </button>
+      </div>
+
+      <div
+        className="rounded-xl px-3 py-2.5 flex-1"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="space-y-1 text-xs">
+          {([
+            ['Statut live', liveStatus],
+            ['Intent actif', activeIntent],
+            ['Dernier skill', lastSkillLabel],
+          ] as [string, string][]).map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-2">
+              <span className="shrink-0" style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
+              <span className="truncate text-right" style={{ color: 'var(--color-text)' }}>{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-auto">
+        <div className="text-xs" style={{ color: alertCount > 0 ? 'var(--color-warning)' : 'var(--color-text-tertiary)' }}>
+          {alertCount > 0 ? `⚠ ${alertCount} alerte${alertCount > 1 ? 's' : ''}` : '✓ Aucune alerte'}
+        </div>
+        <div className="text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>{lastActivity}</div>
+      </div>
+    </div>
+  );
+}
+
+function AdvProjectCard({
+  status,
+  onStatusClick,
+  snap,
+}: {
+  status: ProjectStatus;
+  onStatusClick: () => void;
+  snap: AdvSnapshot | null;
+}) {
+  const navigate = useNavigate();
+  const cfg = PROJECT_STATUS_CONFIG[status];
+  const accent = 'var(--color-success)';
+
+  const isLive = !!snap && !snap._empty;
+  const isStale = isLive && !!snap?._stale;
+  const mrr = snap?.business?.mrr !== undefined ? `${snap.business.mrr} €` : ADV_KPI_MOCK.mrr;
+  const abos = snap?.abonnements?.actifs ?? ADV_KPI_MOCK.subscriptions;
+  const users = snap?.utilisateurs?.total ?? ADV_KPI_MOCK.users;
+  const churn = snap?.abonnements?.churn_rate !== undefined ? `${snap.abonnements.churn_rate} %` : ADV_KPI_MOCK.churn;
+  const devis = snap?.usage?.devis_total ?? ADV_KPI_MOCK.quotesGenerated;
+  const factures = snap?.usage?.factures_total ?? ADV_KPI_MOCK.invoicesGenerated;
+
+  const nonOkServices = Object.entries(snap?.sante_technique?.services ?? {}).filter(([, v]) => v !== 'ok').map(([k]) => k);
+  const mainIssue = nonOkServices.length > 0
+    ? nonOkServices.join(' · ') + ' non configuré'
+    : ADV_KPI_MOCK.mainIssue;
+
+  const subtitle = isLive
+    ? `données N8N · ${new Date(snap!.generated_at!).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}${isStale ? ' (périmées)' : ''}`
+    : 'pré-lancement · données estimées';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate('/jarvis-personal/project/adv')}
+      onKeyDown={(e) => { if (e.key === 'Enter') navigate('/jarvis-personal/project/adv'); }}
+      className="hud-panel p-5 cursor-pointer"
+      style={{
+        background: `linear-gradient(160deg, color-mix(in srgb, ${accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
+        border: `1px solid color-mix(in srgb, ${accent} 16%, transparent)`,
+      }}
+    >
+      <div className="flex items-start justify-between gap-2 mb-4">
+        <div>
+          <div className="font-semibold text-sm flex items-center gap-2" style={{ color: 'var(--color-text)' }}>
+            <TrendingUp size={14} style={{ color: accent }} />
+            ADV — Facturation vocale pour artisans
+          </div>
+          <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+            {subtitle}
+            {!isLive && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide"
+                style={{ background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 22%, transparent)' }}
+              >
+                estimé
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onStatusClick(); }}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+          style={{
+            background: `color-mix(in srgb, ${cfg.color} 14%, transparent)`,
+            color: cfg.color,
+            border: `1px solid color-mix(in srgb, ${cfg.color} 22%, transparent)`,
+          }}
+          title="Clic pour changer le statut"
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+        >
+          <span className="inline-block rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+          {cfg.label}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        {([
+          ['MRR', mrr],
+          ['Abonnements', abos],
+          ['Utilisateurs', users],
+          ['Churn', churn],
+          ['Devis générés', devis],
+          ['Factures générées', factures],
+          ['Crédits IA', `${ADV_KPI_MOCK.creditsConsumed} tokens`],
+          ['Lancement', ADV_KPI_MOCK.launch],
+        ] as [string, string | number][]).map(([label, value]) => (
+          <div
+            key={label}
+            className="rounded-xl px-3 py-2"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--color-text-tertiary)' }}>
+              {label}
+            </div>
+            <div className="text-sm font-semibold mt-0.5" style={{ color: accent }}>
+              {String(value)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div
+          className="rounded-xl px-3 py-2.5"
+          style={{
+            background: 'color-mix(in srgb, var(--color-warning) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--color-warning) 24%, transparent)',
+          }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.12em] mb-1" style={{ color: 'var(--color-warning)' }}>
+            Alerte principale
+          </div>
+          <div className="text-xs" style={{ color: 'var(--color-text)' }}>
+            {mainIssue}
+          </div>
+        </div>
+        <div
+          className="rounded-xl px-3 py-2.5"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.12em] mb-1" style={{ color: 'var(--color-text-tertiary)' }}>
+            Prochaine action ADV
+          </div>
+          <div className="text-xs" style={{ color: 'var(--color-text)' }}>
+            {ADV_KPI_MOCK.nextAction}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GraphifyProjectCard({
+  status,
+  onStatusClick,
+  connector,
+}: {
+  status: ProjectStatus;
+  onStatusClick: () => void;
+  connector?: { status: string; summary?: string; details: Record<string, unknown>; updated_at: string } | null;
+}) {
+  const navigate = useNavigate();
+  const cfg = PROJECT_STATUS_CONFIG[status];
+  const accent = 'var(--color-accent)';
+  const isLive = !!connector;
+
+  const details = connector?.details ?? {};
+  const rows: [string, string][] = isLive
+    ? [
+        ['Statut', String(details.status ?? connector?.status ?? '—')],
+        ['Route HTML', String(details.html_route ?? '—')],
+        ['Smoke test', String(details.smoke_test ?? '—')],
+        ['Mode rendu', String(details.render_mode ?? '—')],
+      ]
+    : [
+        ['Dernier scan', GRAPHIFY_MOCK.lastScan],
+        ['Notes orphelines', GRAPHIFY_MOCK.orphanNotes],
+        ['Doublons concepts', GRAPHIFY_MOCK.duplicates],
+        ['Liens faibles', GRAPHIFY_MOCK.weakLinks],
+      ];
+
+  const nextAction = isLive
+    ? `Voir le graphe → ${String(details.html_route ?? '/graphify/jarvis')}`
+    : GRAPHIFY_MOCK.nextAction;
+
+  const htmlRoute = String(connector?.details?.html_route ?? '/graphify/jarvis');
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate('/jarvis-personal/project/graphify')}
+      onKeyDown={(e) => { if (e.key === 'Enter') navigate('/jarvis-personal/project/graphify'); }}
+      className="hud-panel p-5 flex flex-col gap-3 h-full cursor-pointer"
+      style={{
+        background: `linear-gradient(160deg, color-mix(in srgb, ${accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
+        border: `1px solid color-mix(in srgb, ${accent} 16%, transparent)`,
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm flex items-center gap-1.5" style={{ color: 'var(--color-text)' }}>
+            <GitBranch size={13} style={{ color: accent }} />
+            Graphify
+          </div>
+          <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+            Cartographie et analyse du vault
+            {!isLive && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide"
+                style={{ background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 22%, transparent)' }}
+              >
+                à connecter
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onStatusClick}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+          style={{
+            background: `color-mix(in srgb, ${cfg.color} 14%, transparent)`,
+            color: cfg.color,
+            border: `1px solid color-mix(in srgb, ${cfg.color} 22%, transparent)`,
+          }}
+        >
+          <span className="inline-block rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+          {cfg.label}
+        </button>
+      </div>
+      <div
+        className="rounded-xl px-3 py-2.5 flex-1"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="space-y-1 text-xs">
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex justify-between">
+              <span style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
+              <span style={{ color: 'var(--color-text)' }}>{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {isLive ? (
+        <a
+          href={htmlRoute}
+          onClick={(e) => e.stopPropagation()}
+          className="text-xs mt-auto"
+          style={{ color: accent }}
+        >
+          › {nextAction}
+        </a>
+      ) : (
+        <div className="text-xs mt-auto" style={{ color: accent }}>
+          › {nextAction}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ObsidianProjectCard({
+  status,
+  onStatusClick,
+  ideas,
+}: {
+  status: ProjectStatus;
+  onStatusClick: () => void;
+  ideas: { total: number; pending: number } | null;
+}) {
+  const navigate = useNavigate();
+  const cfg = PROJECT_STATUS_CONFIG[status];
+  const accent = 'var(--color-accent-purple)';
+  const isLive = ideas !== null;
+
+  const rows: [string, string, string?][] = isLive
+    ? [
+        ['Idées inbox', String(ideas.total)],
+        ['En attente', String(ideas.pending)],
+        ['Traitées', String(ideas.total - ideas.pending)],
+      ]
+    : [
+        ['Idées inbox', OBSIDIAN_MOCK.ideasInbox],
+        ['À classer', OBSIDIAN_MOCK.toClassify],
+        ['État actuel mis à jour', OBSIDIAN_MOCK.lastStateUpdate],
+      ];
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => navigate('/jarvis-personal/project/obsidian')}
+      onKeyDown={(e) => { if (e.key === 'Enter') navigate('/jarvis-personal/project/obsidian'); }}
+      className="hud-panel p-5 flex flex-col gap-3 h-full cursor-pointer"
+      style={{
+        background: `linear-gradient(160deg, color-mix(in srgb, ${accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
+        border: `1px solid color-mix(in srgb, ${accent} 16%, transparent)`,
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm flex items-center gap-1.5" style={{ color: 'var(--color-text)' }}>
+            <BookOpen size={13} style={{ color: accent }} />
+            Obsidian
+          </div>
+          <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+            Second brain et mémoire durable
+            {!isLive && (
+              <span
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide"
+                style={{ background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', color: 'var(--color-warning)', border: '1px solid color-mix(in srgb, var(--color-warning) 22%, transparent)' }}
+              >
+                à connecter
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onStatusClick(); }}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+          style={{
+            background: `color-mix(in srgb, ${cfg.color} 14%, transparent)`,
+            color: cfg.color,
+            border: `1px solid color-mix(in srgb, ${cfg.color} 22%, transparent)`,
+          }}
+        >
+          <span className="inline-block rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+          {cfg.label}
+        </button>
+      </div>
+      <div
+        className="rounded-xl px-3 py-2.5 flex-1"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="space-y-1 text-xs">
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex justify-between">
+              <span style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
+              <span style={{ color: 'var(--color-text)' }}>{value}</span>
+            </div>
+          ))}
+          <div className="flex justify-between">
+            <span style={{ color: 'var(--color-text-tertiary)' }}>Santé mémoire</span>
+            <span style={{ color: isLive ? 'var(--color-success)' : 'var(--color-warning)' }}>
+              {isLive ? 'OK' : OBSIDIAN_MOCK.memoryHealth}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="text-xs mt-auto" style={{ color: accent }}>
+        › {isLive ? `${ideas!.total} idées — voir vault` : 'Connecter vault Obsidian'}
+      </div>
+    </div>
+  );
+}
+
+function ValenaProjectCard({
+  status,
+  onStatusClick,
+}: {
+  status: ProjectStatus;
+  onStatusClick: () => void;
+}) {
+  const cfg = PROJECT_STATUS_CONFIG[status];
+  const accent = '#F87171';
+
+  return (
+    <div
+      className="hud-panel p-5 flex flex-col gap-3 h-full"
+      style={{
+        background: `linear-gradient(160deg, color-mix(in srgb, ${accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
+        border: `1px solid color-mix(in srgb, ${accent} 16%, transparent)`,
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold text-sm flex items-center gap-1.5" style={{ color: 'var(--color-text)' }}>
+            <Mic size={13} style={{ color: accent }} />
+            Valéna
+          </div>
+          <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--color-text-tertiary)' }}>
+            Assistante vocale IA
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide"
+              style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 12%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid color-mix(in srgb, var(--color-text-tertiary) 20%, transparent)' }}
+            >
+              conception
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={onStatusClick}
+          className="shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium cursor-pointer"
+          style={{
+            background: `color-mix(in srgb, ${cfg.color} 14%, transparent)`,
+            color: cfg.color,
+            border: `1px solid color-mix(in srgb, ${cfg.color} 22%, transparent)`,
+          }}
+        >
+          <span className="inline-block rounded-full h-1.5 w-1.5" style={{ background: cfg.color }} />
+          {cfg.label}
+        </button>
+      </div>
+      <div
+        className="rounded-xl px-3 py-2.5 flex-1"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="space-y-1 text-xs">
+          {([
+            ['Statut', VALENA_MOCK.status],
+            ['Prochaine étape', VALENA_MOCK.nextStep],
+            ['Docs en attente', VALENA_MOCK.pendingDocs],
+          ] as const).map(([label, value]) => (
+            <div key={label} className="flex justify-between">
+              <span style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
+              <span style={{ color: 'var(--color-text)' }}>{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="text-xs mt-auto" style={{ color: 'var(--color-text-tertiary)' }}>
+        › {VALENA_MOCK.nextStep}
+      </div>
+    </div>
+  );
+}
+
+function ProjectsGrid({ cockpitData }: { cockpitData: PersonalCockpitSnapshot }) {
+  const [advSnap, setAdvSnap] = useState<AdvSnapshot | null>(null);
+  useEffect(() => { fetchAdvSnapshot().then(setAdvSnap).catch(() => {}); }, []);
+
+  const [obsidianIdeas, setObsidianIdeas] = useState<{ total: number; pending: number } | null>(null);
+  useEffect(() => {
+    fetchIdeas().then((items) => setObsidianIdeas({ total: items.length, pending: items.filter((i) => !i.done).length })).catch(() => {});
+  }, []);
+
+  const [statuses, setStatuses] = useState<Record<string, ProjectStatus>>(() => {
+    try {
+      const raw = localStorage.getItem(PROJECTS_STORAGE_KEY);
+      const stored = raw ? JSON.parse(raw) : {};
+      const result: Record<string, ProjectStatus> = {};
+      for (const p of PROJECT_DEFS) {
+        result[p.id] = (stored[p.id] as ProjectStatus) || p.defaultStatus;
+      }
+      return result;
+    } catch {
+      const result: Record<string, ProjectStatus> = {};
+      for (const p of PROJECT_DEFS) result[p.id] = p.defaultStatus;
+      return result;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(statuses));
+    } catch {}
+  }, [statuses]);
+
+  const cycleStatus = (id: string) =>
+    setStatuses((prev) => ({ ...prev, [id]: PROJECT_STATUS_CYCLE[prev[id] || 'active'] }));
+
+  const graphifyConnector = cockpitData.connectors.find((c) => c.name === 'Graphify') ?? null;
+
+  const jarvisAlerts = cockpitData.alerts.filter(
+    (a) => a.level === 'warning' || a.level === 'error',
+  ).length;
+
+  const lastActivityJarvis =
+    cockpitData.general_state.age_seconds != null
+      ? `${fmtAgo(cockpitData.general_state.age_seconds)} ago`
+      : '—';
+
+  const standardProjects = PROJECT_DEFS.filter((p) => !['adv', 'graphify', 'obsidian', 'valena'].includes(p.id));
+
+  return (
+    <Section id="projects" title="Mes projets" icon={Layers}>
+      {/* ADV — carte pleine largeur avec KPIs business */}
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.22, delay: 0, ease: [0.25, 0.1, 0.25, 1] }}
+        className="mb-3"
+      >
+        <AdvProjectCard
+          status={statuses['adv'] || 'active'}
+          onStatusClick={() => cycleStatus('adv')}
+          snap={advSnap}
+        />
+      </motion.div>
+
+      {/* Rangée 2 : Jarvis/Hermès, Graphify, Obsidian */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        {([
+          <JarvisProjectCard
+            status={statuses['jarvis'] || 'active'}
+            onStatusClick={() => cycleStatus('jarvis')}
+            cockpitData={cockpitData}
+          />,
+          <GraphifyProjectCard
+            status={statuses['graphify'] || 'active'}
+            onStatusClick={() => cycleStatus('graphify')}
+            connector={graphifyConnector}
+          />,
+          <ObsidianProjectCard
+            status={statuses['obsidian'] || 'active'}
+            onStatusClick={() => cycleStatus('obsidian')}
+            ideas={obsidianIdeas}
+          />,
+        ].map((card, i) => (
+          <motion.div
+            key={i}
+            className="h-full"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, delay: 0.07 + i * 0.07, ease: [0.25, 0.1, 0.25, 1] }}
+          >
+            {card}
+          </motion.div>
+        )))}
+      </div>
+
+      {/* Rangée 3 : Valéna + projets standards (ABG…) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <motion.div
+          className="h-full"
+          initial={{ opacity: 0, y: 14 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, delay: 0.28, ease: [0.25, 0.1, 0.25, 1] }}
+        >
+          <ValenaProjectCard
+            status={statuses['valena'] || 'pause'}
+            onStatusClick={() => cycleStatus('valena')}
+          />
+        </motion.div>
+        {standardProjects.map((project, i) => (
+          <motion.div
+            key={project.id}
+            className="h-full"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, delay: 0.35 + i * 0.07, ease: [0.25, 0.1, 0.25, 1] }}
+          >
+            <ProjectCard
+              project={project}
+              status={statuses[project.id] || project.defaultStatus}
+              alertCount={0}
+              lastActivity="—"
+              onStatusClick={() => cycleStatus(project.id)}
+            />
+          </motion.div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+// ─── Ideas Inbox ──────────────────────────────────────────────────────────────
+
+const INBOX_STORAGE_KEY = 'ruth_ideas_inbox';
+
+type IdeaTag = 'Business' | 'ADV' | 'Jarvis' | 'TikTok' | 'Perso';
+
+interface IdeaItem {
+  id: string;
+  text: string;
+  tag: IdeaTag;
+  createdAt: number;
+  obsidian_path?: string;
+  section?: string;
+}
+
+const IDEA_TAGS: IdeaTag[] = ['Business', 'ADV', 'Jarvis', 'TikTok', 'Perso'];
+
+const IDEA_TAG_COLORS: Record<IdeaTag, { color: string; bg: string }> = {
+  Business: {
+    color: 'var(--color-accent)',
+    bg: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',
+  },
+  ADV: {
+    color: 'var(--color-success)',
+    bg: 'color-mix(in srgb, var(--color-success) 16%, transparent)',
+  },
+  Jarvis: {
+    color: 'var(--color-accent-purple)',
+    bg: 'color-mix(in srgb, var(--color-accent-purple) 16%, transparent)',
+  },
+  TikTok: {
+    color: '#F87171',
+    bg: 'color-mix(in srgb, #F87171 16%, transparent)',
+  },
+  Perso: {
+    color: 'var(--color-text-secondary)',
+    bg: 'color-mix(in srgb, var(--color-text-secondary) 14%, transparent)',
+  },
+};
+
+function fmtIdeaDate(ts: number): string {
+  const diff = Date.now() - ts;
+  const days = Math.floor(diff / 86_400_000);
+  if (days === 0) return "Aujourd'hui";
+  if (days === 1) return 'Hier';
+  if (days < 7) return `Il y a ${days}j`;
+  return new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+}
+
+function IdeasInbox() {
+  const [ideas, setIdeas] = useState<IdeaItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState('');
+  const [selectedTag, setSelectedTag] = useState<IdeaTag>('Business');
+  const [filterTag, setFilterTag] = useState<IdeaTag | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const loadIdeas = useCallback(() => {
+    fetchIdeas()
+      .then((data) => {
+        setIdeas(
+          data
+            .filter((item) => !item.done)
+            .map((item) => ({
+              id: item.id,
+              text: item.text,
+              tag: (IDEA_TAGS.includes(item.tag as IdeaTag) ? item.tag : 'Business') as IdeaTag,
+              createdAt: 0,
+              obsidian_path: item.obsidian_path,
+              section: item.section,
+            })),
+        );
+      })
+      .catch(() => {
+        try {
+          const raw = localStorage.getItem(INBOX_STORAGE_KEY);
+          if (raw) setIdeas(JSON.parse(raw));
+        } catch {}
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    loadIdeas();
+    const interval = setInterval(loadIdeas, 60_000);
+    return () => clearInterval(interval);
+  }, [loadIdeas]);
+
+  const addIdea = async () => {
+    const text = draft.trim();
+    if (!text || saving) return;
+    setSaving(true);
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      const result = await createIdea(text, selectedTag, today);
+      setIdeas((prev) => [
+        { id: crypto.randomUUID(), text, tag: selectedTag, createdAt: Date.now(), obsidian_path: result.obsidian_path, section: result.section },
+        ...prev,
+      ]);
+      if (result.ok) {
+        toast.success("Idée enregistrée dans Obsidian", {
+          description: result.section,
+          duration: 3000,
+        });
+      }
+    } catch {
+      setIdeas((prev) => [
+        { id: crypto.randomUUID(), text, tag: selectedTag, createdAt: Date.now() },
+        ...prev,
+      ]);
+      toast.info("Hermès hors ligne — idée sauvegardée localement");
+    } finally {
+      setSaving(false);
+      setDraft('');
+    }
+  };
+
+  const deleteIdea = (idea: IdeaItem) => {
+    setIdeas((prev) => prev.filter((i) => i.id !== idea.id));
+    if (idea.obsidian_path) {
+      toggleIdea(idea.text, idea.section || '', true).catch(() => {});
+    }
+  };
+
+  const visible = filterTag ? ideas.filter((i) => i.tag === filterTag) : ideas;
+
+  return (
+    <Section id="ideas-inbox" title="Idées Inbox" icon={Lightbulb}>
+      {/* Capture */}
+      <div
+        className="rounded-2xl p-4 mb-4"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') addIdea(); }}
+            placeholder={"Capturer une idée..."}
+            className="flex-1 bg-transparent outline-none text-sm"
+            style={{ color: 'var(--color-text)' }}
+          />
+          <button
+            onClick={addIdea}
+            disabled={!draft.trim() || saving}
+            className="shrink-0 p-1.5 rounded-lg disabled:opacity-30 cursor-pointer"
+            style={{
+              background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',
+              color: 'var(--color-accent)',
+            }}
+          >
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {IDEA_TAGS.map((tag) => {
+            const tc = IDEA_TAG_COLORS[tag];
+            const active = selectedTag === tag;
+            return (
+              <button
+                key={tag}
+                onClick={() => setSelectedTag(tag)}
+                className="px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-opacity"
+                style={{
+                  color: tc.color,
+                  background: active ? tc.bg : 'transparent',
+                  border: `1px solid ${active ? tc.color : 'var(--color-border)'}`,
+                  opacity: active ? 1 : 0.6,
+                }}
+              >
+                {tag}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Filter pills */}
+      {ideas.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          <button
+            onClick={() => setFilterTag(null)}
+            className="px-2.5 py-1 rounded-full text-xs cursor-pointer"
+            style={{
+              background: filterTag === null ? 'var(--color-bg-tertiary)' : 'transparent',
+              color: filterTag === null ? 'var(--color-text)' : 'var(--color-text-tertiary)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            Tout ({ideas.length})
+          </button>
+          {IDEA_TAGS.filter((t) => ideas.some((i) => i.tag === t)).map((tag) => {
+            const tc = IDEA_TAG_COLORS[tag];
+            const count = ideas.filter((i) => i.tag === tag).length;
+            return (
+              <button
+                key={tag}
+                onClick={() => setFilterTag(filterTag === tag ? null : tag)}
+                className="px-2.5 py-1 rounded-full text-xs cursor-pointer"
+                style={{
+                  color: tc.color,
+                  background: filterTag === tag ? tc.bg : 'transparent',
+                  border: `1px solid ${filterTag === tag ? tc.color : 'var(--color-border)'}`,
+                }}
+              >
+                {tag} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Cards */}
+      {loading ? (
+        <div className="flex items-center gap-2 py-4" style={{ color: 'var(--color-text-tertiary)' }}>
+          <Loader2 size={14} className="animate-spin" />
+          <span className="text-sm">{"Chargement depuis Obsidian..."}</span>
+        </div>
+      ) : visible.length === 0 ? (
+        <div className="text-sm py-4 text-center" style={{ color: 'var(--color-text-tertiary)' }}>
+          {ideas.length === 0
+            ? "Aucune idée capturée. Commence à écrire ci-dessus."
+            : "Aucune idée dans cette catégorie."}
+        </div>
+      ) : (
+        <AnimatePresence mode="popLayout">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          {visible.map((idea, i) => {
+            const tc = IDEA_TAG_COLORS[idea.tag];
+            return (
+              <motion.div
+                key={idea.id}
+                layout
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.18, delay: i * 0.04 }}
+                className="rounded-2xl p-4 group relative"
+                style={{
+                  background: 'var(--color-bg-secondary)',
+                  border: '1px solid var(--color-border)',
+                }}
+              >
+                {/* Tag + delete */}
+                <div className="flex items-center justify-between mb-2">
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[11px] font-medium"
+                    style={{ color: tc.color, background: tc.bg }}
+                  >
+                    {idea.tag}
+                  </span>
+                  <button
+                    onClick={() => deleteIdea(idea)}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5 rounded"
+                    style={{ color: 'var(--color-text-tertiary)' }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                {/* Text */}
+                <div className="text-sm leading-snug" style={{ color: 'var(--color-text)' }}>
+                  {idea.text}
+                </div>
+                {/* Date / Obsidian badge */}
+                <div className="flex items-center gap-1.5 mt-2">
+                  {idea.obsidian_path && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded"
+                      style={{
+                        color: 'var(--color-success)',
+                        background: 'color-mix(in srgb, var(--color-success) 12%, transparent)',
+                      }}
+                    >
+                      Obsidian
+                    </span>
+                  )}
+                  {idea.createdAt > 0 && (
+                    <span className="text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                      {fmtIdeaDate(idea.createdAt)}
+                    </span>
+                  )}
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+        </AnimatePresence>
+      )}
+    </Section>
+  );
+}
+
+// ─── Alerts ───────────────────────────────────────────────────────────────────
+
+const DISMISSED_ALERTS_KEY = 'ruth_dismissed_alerts';
+
+function alertFingerprint(a: { level: string; title: string }): string {
+  return `${a.level}:${a.title}`;
+}
+
+const ALERT_LEVEL_CONFIG = {
+  error: {
+    label: 'Critique',
+    color: 'var(--color-error)',
+    bg: 'color-mix(in srgb, var(--color-error) 10%, var(--color-surface))',
+    border: 'color-mix(in srgb, var(--color-error) 28%, transparent)',
+    dot: 'var(--color-error)',
+  },
+  warning: {
+    label: 'Important',
+    color: 'var(--color-warning)',
+    bg: 'color-mix(in srgb, var(--color-warning) 8%, var(--color-surface))',
+    border: 'color-mix(in srgb, var(--color-warning) 24%, transparent)',
+    dot: 'var(--color-warning)',
+  },
+  info: {
+    label: 'Info',
+    color: 'var(--color-text-secondary)',
+    bg: 'var(--color-bg-secondary)',
+    border: 'var(--color-border)',
+    dot: 'var(--color-text-tertiary)',
+  },
+} as const;
+
+type AlertLevel = keyof typeof ALERT_LEVEL_CONFIG;
+
+function AlertRow({
+  level,
+  title,
+  detail,
+  onDismiss,
+}: {
+  level: AlertLevel;
+  title: string;
+  detail: string;
+  onDismiss: () => void;
+}) {
+  const cfg = ALERT_LEVEL_CONFIG[level];
+  return (
+    <div
+      className="flex items-start gap-3 rounded-xl px-4 py-3"
+      style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}
+    >
+      <span
+        className="mt-1 shrink-0 inline-block rounded-full h-2 w-2"
+        style={{ background: cfg.dot }}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium" style={{ color: cfg.color }}>
+          {title}
+        </div>
+        {detail && (
+          <div className="text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
+            {detail}
+          </div>
+        )}
+      </div>
+      <button
+        onClick={onDismiss}
+        className="shrink-0 mt-0.5 p-1 rounded cursor-pointer transition-opacity hover:opacity-70"
+        style={{ color: 'var(--color-text-tertiary)' }}
+        title={"Marquer comme traité"}
+      >
+        <CheckCircle2 size={15} />
+      </button>
+    </div>
+  );
+}
+
+function AlertsSection({
+  alerts,
+}: {
+  alerts: Array<{ level: string; title: string; detail: string }>;
+}) {
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(DISMISSED_ALERTS_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
+
+  const dismiss = (fp: string) => {
+    setDismissed((prev) => {
+      const next = new Set(prev);
+      next.add(fp);
+      try {
+        localStorage.setItem(DISMISSED_ALERTS_KEY, JSON.stringify([...next]));
+      } catch {}
+      return next;
+    });
+  };
+
+  const resetDismissed = () => {
+    setDismissed(new Set());
+    try {
+      localStorage.removeItem(DISMISSED_ALERTS_KEY);
+    } catch {}
+  };
+
+  const activeAlerts = alerts.filter((a) => {
+    if (a.level === 'ok') return false;
+    return !dismissed.has(alertFingerprint(a));
+  });
+
+  const byLevel = (lvl: AlertLevel) =>
+    activeAlerts.filter((a) => a.level === lvl) as Array<{ level: AlertLevel; title: string; detail: string }>;
+
+  const critiques = byLevel('error');
+  const importants = byLevel('warning');
+  const infos = byLevel('info');
+
+  const totalDismissed = dismissed.size;
+
+  const countBadge = (count: number, cfg: (typeof ALERT_LEVEL_CONFIG)[AlertLevel]) =>
+    count > 0 ? (
+      <span
+        className="px-2 py-0.5 rounded-full text-[11px] font-medium"
+        style={{ color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}` }}
+      >
+        {count}
+      </span>
+    ) : null;
+
+  const actionArea = totalDismissed > 0 && (
+    <button
+      onClick={resetDismissed}
+      className="text-xs cursor-pointer hover:underline"
+      style={{ color: 'var(--color-text-tertiary)' }}
+    >
+      {`Réafficher ${totalDismissed} traité${totalDismissed > 1 ? 's' : ''}`}
+    </button>
+  );
+
+  return (
+    <Section
+      id="alerts"
+      title="Alertes"
+      icon={Bell}
+      action={
+        <div className="flex items-center gap-2">
+          {countBadge(critiques.length, ALERT_LEVEL_CONFIG.error)}
+          {countBadge(importants.length, ALERT_LEVEL_CONFIG.warning)}
+          {countBadge(infos.length, ALERT_LEVEL_CONFIG.info)}
+          {actionArea}
+        </div>
+      }
+    >
+      <AnimatePresence mode="popLayout" initial={false}>
+        {activeAlerts.length === 0 ? (
+          <motion.div
+            key="nominal"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center gap-2 rounded-xl px-4 py-3"
+            style={{
+              background: 'color-mix(in srgb, var(--color-success) 8%, var(--color-surface))',
+              border: '1px solid color-mix(in srgb, var(--color-success) 20%, transparent)',
+            }}
+          >
+            <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
+            <span className="text-sm font-medium" style={{ color: 'var(--color-success)' }}>
+              {"Aucune alerte active — tout est nominal."}
+            </span>
+          </motion.div>
+        ) : (
+          <div className="space-y-2">
+            <AnimatePresence mode="popLayout">
+              {[...critiques, ...importants, ...infos].map((a) => (
+                <motion.div
+                  key={alertFingerprint(a)}
+                  layout
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 24, height: 0, marginBottom: 0 }}
+                  transition={{ duration: 0.22, ease: [0.25, 0.1, 0.25, 1] }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <AlertRow
+                    level={a.level}
+                    title={a.title}
+                    detail={a.detail}
+                    onDismiss={() => dismiss(alertFingerprint(a))}
+                  />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </AnimatePresence>
+    </Section>
+  );
+}
+
+// ─── Today ────────────────────────────────────────────────────────────────────
+
+const TODAY_STORAGE_KEY = 'ruth_today_priorities';
+
+function TodaySection({
+  alerts,
+  nextMove,
+}: {
+  alerts: Array<{ title: string; detail: string; level: 'warning' | 'info' | 'ok' }>;
+  nextMove: { title: string; detail: string; actionLabel: string; targetId: string };
+}) {
+  const [priorities, setPriorities] = useState<Array<{ id: string; text: string; done: boolean }>>(() => {
+    try {
+      const raw = localStorage.getItem(TODAY_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [draft, setDraft] = useState('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TODAY_STORAGE_KEY, JSON.stringify(priorities));
+    } catch {}
+  }, [priorities]);
+
+  const addItem = () => {
+    const text = draft.trim();
+    if (!text) return;
+    setPriorities((p) => [...p, { id: crypto.randomUUID(), text, done: false }]);
+    setDraft('');
+  };
+
+  const toggleItem = (id: string) =>
+    setPriorities((p) => p.map((item) => (item.id === id ? { ...item, done: !item.done } : item)));
+
+  const deleteItem = (id: string) => setPriorities((p) => p.filter((item) => item.id !== id));
+
+  const activeAlerts = alerts.filter((a) => a.level !== 'ok');
+
+  return (
+    <Section id="today" title="Aujourd'hui" icon={CalendarDays}>
+      <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-4">
+        <div
+          className="rounded-2xl p-4"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-xs uppercase tracking-[0.16em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+            {"Priorités du jour"}
+          </div>
+          {priorities.length === 0 && (
+            <div className="text-sm mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+              {"Aucune priorité. Ajoute la première ci-dessous."}
+            </div>
+          )}
+          <ul className="space-y-2 mb-4">
+            {priorities.map((item) => (
+              <li key={item.id} className="flex items-center gap-2 group">
+                <button
+                  onClick={() => toggleItem(item.id)}
+                  className="shrink-0 cursor-pointer transition-colors"
+                  style={{ color: item.done ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}
+                >
+                  {item.done ? <CheckCircle2 size={16} /> : <Circle size={16} />}
+                </button>
+                <span
+                  className="flex-1 text-sm"
+                  style={{
+                    color: item.done ? 'var(--color-text-tertiary)' : 'var(--color-text)',
+                    textDecoration: item.done ? 'line-through' : 'none',
+                  }}
+                >
+                  {item.text}
+                </span>
+                <button
+                  onClick={() => deleteItem(item.id)}
+                  className="shrink-0 opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div
+            className="flex items-center gap-2 rounded-xl px-3 py-2"
+            style={{ border: '1px solid var(--color-border)', background: 'var(--color-surface)' }}
+          >
+            <input
+              type="text"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') addItem(); }}
+              placeholder="Ajouter une priorité..."
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: 'var(--color-text)' }}
+            />
+            <button
+              onClick={addItem}
+              disabled={!draft.trim()}
+              className="shrink-0 p-1 rounded-lg disabled:opacity-30 cursor-pointer"
+              style={{
+                background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',
+                color: 'var(--color-accent)',
+              }}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {activeAlerts.length > 0 ? (
+            activeAlerts.slice(0, 2).map((a, i) => (
+              <AttentionCard key={i} title={a.title} detail={a.detail} level={a.level} />
+            ))
+          ) : (
+            <div
+              className="rounded-2xl px-4 py-4"
+              style={{
+                background: 'color-mix(in srgb, var(--color-success) 8%, var(--color-surface))',
+                border: '1px solid color-mix(in srgb, var(--color-success) 20%, transparent)',
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
+                <span className="text-sm font-medium" style={{ color: 'var(--color-success)' }}>
+                  {"Aucune alerte active"}
+                </span>
+              </div>
+            </div>
+          )}
+          <GuidanceCard title={nextMove.title} detail={nextMove.detail} />
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function MemoryGraphifySection({
+  fileHealth,
+}: {
+  fileHealth: Record<string, PersonalCockpitFileHealth>;
+}) {
+  const entries = Object.entries(fileHealth || {});
+  const presentCount = entries.filter(([, v]) => v.exists).length;
+  const missingCount = entries.filter(([, v]) => !v.exists).length;
+
+  return (
+    <Section
+      id="memory-graphify"
+      title="Mémoire & Graphify"
+      subtitle="Santé Obsidian, états actuel, carte conceptuelle."
+      icon={Brain}
+    >
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Fichiers Hermès */}
+        <div
+          className="rounded-2xl px-4 py-4"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-xs uppercase tracking-[0.16em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+            Fichiers Hermès (file_health)
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <div
+              className="rounded-xl px-3 py-2 text-center"
+              style={{
+                background: 'color-mix(in srgb, var(--color-success) 10%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--color-success) 24%, transparent)',
+              }}
+            >
+              <div className="text-xl font-semibold" style={{ color: 'var(--color-success)' }}>{presentCount}</div>
+              <div className="text-[10px] uppercase tracking-[0.12em] mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>Présents</div>
+            </div>
+            <div
+              className="rounded-xl px-3 py-2 text-center"
+              style={{
+                background: missingCount > 0
+                  ? 'color-mix(in srgb, var(--color-error) 8%, transparent)'
+                  : 'var(--color-surface)',
+                border: missingCount > 0
+                  ? '1px solid color-mix(in srgb, var(--color-error) 22%, transparent)'
+                  : '1px solid var(--color-border)',
+              }}
+            >
+              <div
+                className="text-xl font-semibold"
+                style={{ color: missingCount > 0 ? 'var(--color-error)' : 'var(--color-text-tertiary)' }}
+              >
+                {missingCount}
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.12em] mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>Manquants</div>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            {entries.slice(0, 8).map(([key, val]) => (
+              <div key={key} className="flex items-center justify-between gap-2 text-xs">
+                <span className="truncate" style={{ color: 'var(--color-text-secondary)' }}>{key}</span>
+                <Badge value={val.exists ? 'présent' : 'absent'} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Graphify */}
+        <div
+          className="rounded-2xl px-4 py-4"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <GitBranch size={13} style={{ color: 'var(--color-accent)' }} />
+            <div className="text-xs uppercase tracking-[0.16em]" style={{ color: 'var(--color-text-tertiary)' }}>
+              Graphify — Carte conceptuelle
+            </div>
+          </div>
+          <div className="space-y-2 text-xs mb-4">
+            {([
+              ['Dernier scan', GRAPHIFY_MOCK.lastScan],
+              ['Notes orphelines', GRAPHIFY_MOCK.orphanNotes],
+              ['Doublons conceptuels', GRAPHIFY_MOCK.duplicates],
+              ['Liens faibles', GRAPHIFY_MOCK.weakLinks],
+            ] as const).map(([label, value]) => (
+              <div key={label} className="flex justify-between items-center">
+                <span style={{ color: 'var(--color-text-secondary)' }}>{label}</span>
+                <span style={{ color: 'var(--color-text)' }}>{value}</span>
+              </div>
+            ))}
+          </div>
+          <div
+            className="rounded-xl px-3 py-2.5 mb-3"
+            style={{
+              background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-accent) 20%, transparent)',
+            }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.12em] mb-1" style={{ color: 'var(--color-accent)' }}>
+              Prochaine action
+            </div>
+            <div className="text-xs" style={{ color: 'var(--color-text)' }}>
+              {GRAPHIFY_MOCK.nextAction}
+            </div>
+          </div>
+          <div className="text-xs mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            Inbox globale · Liens à créer · Notes à classer
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {(['Inbox', 'Liens', 'À classer'] as const).map((chip) => (
+              <span
+                key={chip}
+                className="px-2 py-1 rounded-full text-[11px]"
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text-tertiary)',
+                }}
+              >
+                {chip} —
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 export function JarvisPersonalPage() {
   const [data, setData] = useState<PersonalCockpitSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [forceHermesChatFocus, setForceHermesChatFocus] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -694,6 +2574,24 @@ export function JarvisPersonalPage() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    const shouldFocusChat = () => {
+      const hash = window.location.hash || '';
+      const params = new URLSearchParams(window.location.search);
+      if (hash !== '#hermes-chat' && params.get('mode') !== 'chat') return;
+      setForceHermesChatFocus(false);
+      window.setTimeout(() => setForceHermesChatFocus(true), 40);
+      const section = document.getElementById('hermes-chat');
+      if (section) {
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+
+    shouldFocusChat();
+    window.addEventListener('hashchange', shouldFocusChat);
+    return () => window.removeEventListener('hashchange', shouldFocusChat);
+  }, []);
+
   const derived = useMemo(() => {
     if (!data) {
       return {
@@ -721,7 +2619,7 @@ export function JarvisPersonalPage() {
     } else {
       attentionCards.push({
         title: 'Aucune validation bloquante',
-        detail: 'Aucune action réelle n’attend une confirmation vocale maintenant.',
+        detail: "Aucune action réelle n'attend une confirmation vocale maintenant.",
         level: 'ok',
       });
     }
@@ -741,14 +2639,22 @@ export function JarvisPersonalPage() {
       });
     }
 
-    const lastDynamicSummary =
-      String(data.yahoo_dynamic_result?.voice_summary || data.yahoo_dynamic_result?.action || '').trim() ||
-      'Pas de résultat Yahoo dynamique récent.';
-    attentionCards.push({
-      title: 'Dernier mouvement Yahoo',
-      detail: lastDynamicSummary,
-      level: 'info',
-    });
+    if (data.priority_lane?.headline) {
+      attentionCards.push({
+        title: data.priority_lane.headline,
+        detail: data.priority_lane.detail,
+        level: data.priority_lane.severity === 'warning' ? 'warning' : data.priority_lane.severity === 'ok' ? 'ok' : 'info',
+      });
+    } else {
+      const lastDynamicSummary =
+        String(data.yahoo_dynamic_result?.voice_summary || data.yahoo_dynamic_result?.action || '').trim() ||
+        'Pas de résultat Yahoo dynamique récent.';
+      attentionCards.push({
+        title: 'Dernier mouvement Yahoo',
+        detail: lastDynamicSummary,
+        level: 'info',
+      });
+    }
 
     const connectorSummary = data.connectors
       .map((connector) => `${connector.name}: ${connector.status}`)
@@ -764,8 +2670,8 @@ export function JarvisPersonalPage() {
       ).trim() || 'Aucun résultat opérationnel récent.';
 
     let nextMove = {
-      title: 'Rafraîchir ou relire l’état',
-      detail: 'Le cockpit ne voit pas de blocage immédiat. Le geste le plus utile est de vérifier le dernier résultat ou la continuité récente.',
+      title: "Rafraîchir ou relire l'état",
+      detail: "Le cockpit ne voit pas de blocage immédiat. Le geste le plus utile est de vérifier le dernier résultat ou la continuité récente.",
       actionLabel: 'Aller au dernier résultat',
       targetId: 'yahoo-result',
     };
@@ -773,14 +2679,14 @@ export function JarvisPersonalPage() {
     if (data.pending_validation) {
       nextMove = {
         title: 'Traiter la validation en attente',
-        detail: 'Le prochain geste sûr est de relire exactement l’action en attente, puis de décider si Ruth veut répondre vocalement oui ou non.',
+        detail: "Le prochain geste sûr est de relire exactement l'action en attente, puis de décider si Ruth veut répondre vocalement oui ou non.",
         actionLabel: 'Ouvrir la validation',
         targetId: 'pending-validation',
       };
     } else if (data.continuity.length > 0) {
       nextMove = {
         title: 'Reprendre le prochain contexte utile',
-        detail: 'Aucun blocage immédiat n’est en attente. Le geste le plus utile est de relire l’artefact de continuité le plus récent avant de reprendre.',
+        detail: "Aucun blocage immédiat n'est en attente. Le geste le plus utile est de relire l'artefact de continuité le plus récent avant de reprendre.",
         actionLabel: 'Ouvrir la continuité',
         targetId: 'continuity-details',
       };
@@ -822,12 +2728,29 @@ export function JarvisPersonalPage() {
   }
 
   const general = data.general_state;
+  const hermes = data.hermes || {};
   const liveSummary = data.last_live_brief;
   const targeted = data.yahoo_targeted_move;
   const candidate = data.yahoo_dynamic_candidate;
   const finalBatch = data.yahoo_dynamic_result;
   const handoffPath = data.file_health.session_handoffs?.path || '';
   const latestYahooSummary = String(finalBatch?.voice_summary || targeted?.voice_summary || '').trim();
+  const hermesNextActions = Array.isArray(hermes.next_actions) ? hermes.next_actions : [];
+  const riskGuard = (hermes.risk_guard || {}) as PersonalCockpitRecord;
+  const sessionCloser = (hermes.session_closer || {}) as PersonalCockpitRecord;
+  const orchestrator = (hermes.orchestrator || {}) as PersonalCockpitRecord;
+  const delegation = (hermes.delegation || {}) as PersonalCockpitRecord;
+  const toolResearch = (hermes.tool_research || {}) as PersonalCockpitRecord;
+  const orchestratorTrace = Array.isArray(orchestrator.recent_trace)
+    ? (orchestrator.recent_trace as Array<Record<string, unknown>>)
+    : [];
+  const backendAttention = Array.isArray(data.attention_now) ? data.attention_now : [];
+  const priorities = data.priorities;
+  const signals = data.signals || {};
+  const cloudBudgetFlag = budgetFlag(
+    data.hermes?.chat_runtime?.budget?.estimated_usage_ratio,
+    data.hermes?.chat_runtime?.budget?.warning_level,
+  );
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-8">
@@ -836,63 +2759,94 @@ export function JarvisPersonalPage() {
           className="hud-panel p-6"
           style={{
             background:
-              'linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 10%, var(--color-surface)) 0%, var(--color-surface) 48%, color-mix(in srgb, var(--color-accent-purple) 8%, var(--color-surface)) 100%)',
+              'linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 8%, var(--color-surface)) 0%, var(--color-surface) 45%, color-mix(in srgb, var(--color-accent-purple) 10%, var(--color-surface)) 100%)',
           }}
         >
-          <div className="flex flex-col xl:flex-row xl:items-end gap-4">
+          {/* Title row */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2 mb-1.5">
                 <span className="hud-heartbeat" />
-                <span className="hud-label uppercase tracking-[0.22em]">Jarvis Personal Cockpit</span>
+                <span className="hud-label uppercase tracking-[0.22em]">Ruth OS</span>
               </div>
-              <h1 className="text-3xl md:text-4xl font-semibold leading-tight" style={{ color: 'var(--color-text)' }}>
-                Cockpit personnel Ruth
+              <h1
+                className="text-3xl md:text-4xl font-semibold leading-tight"
+                style={{ color: 'var(--color-text)' }}
+              >
+                Ruth OS
               </h1>
-              <p className="text-sm md:text-base mt-3 max-w-3xl" style={{ color: 'var(--color-text-secondary)' }}>
-                Vue locale séparée d’Obsidian, centrée sur l’état Jarvis, la voix, les validations en attente et les mouvements Yahoo réellement suivis.
+              <p className="text-sm mt-2 max-w-xl" style={{ color: 'var(--color-text-secondary)' }}>
+                {"Projets · Hermès · Alertes · Idées · Vie"}
               </p>
             </div>
-
-            <div className="xl:ml-auto flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-center gap-2 shrink-0">
               <div
-                className="rounded-2xl px-4 py-3"
+                className="rounded-xl px-3 py-2 text-center"
                 style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
               >
-                <div className="text-[11px] uppercase tracking-[0.16em]" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Dernier snapshot
+                <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Snapshot
                 </div>
-                <div className="text-sm hud-mono mt-1" style={{ color: 'var(--color-text)' }}>
+                <div className="text-xs hud-mono mt-0.5" style={{ color: 'var(--color-text)' }}>
                   {fmtDate(data.meta.generated_at)}
                 </div>
               </div>
               <button
                 onClick={refresh}
-                className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl cursor-pointer"
+                className="p-2.5 rounded-xl cursor-pointer"
                 style={{
                   background: 'var(--color-bg-secondary)',
                   border: '1px solid var(--color-border)',
-                  color: 'var(--color-text)',
+                  color: 'var(--color-text-secondary)',
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-bg-secondary)')}
+                title="Rafraîchir"
               >
                 <RefreshCw size={15} />
-                Rafraîchir
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-5">
+          {/* 4 KPI cards */}
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
             <SummaryCard
-              title="Jarvis"
-              value={general.live_status === 'recently_active' ? 'Actif récemment' : general.live_status}
-              note={general.status}
-              badge={<Badge value={general.live_status || 'idle'} />}
+              title="Hermès"
+              value={String(hermes.overall || general.status || 'unknown')}
+              note={String(general.last_recommended_action || general.active_intent || 'En veille')}
+              badge={<Badge value={String(hermes.overall || general.status || 'unknown')} />}
+              accent="var(--color-accent-purple)"
             />
             <SummaryCard
-              title="Voix"
-              value={data.voice_live.wake_word || 'Jarvis'}
-              note={`${data.voice_live.stt} · ${data.voice_live.tts}`}
-              badge={<Badge value={data.voice_live.vad || 'n/a'} />}
-              accent="var(--color-accent-purple)"
+              title="Alertes"
+              value={
+                data.alerts.filter((a) => a.level === 'error' || a.level === 'warning').length > 0
+                  ? `${data.alerts.filter((a) => a.level === 'error' || a.level === 'warning').length} active${data.alerts.filter((a) => a.level === 'error' || a.level === 'warning').length > 1 ? 's' : ''}`
+                  : 'Nominal'
+              }
+              note={
+                data.alerts.filter((a) => a.level === 'error').length > 0
+                  ? `${data.alerts.filter((a) => a.level === 'error').length} critique${data.alerts.filter((a) => a.level === 'error').length > 1 ? 's' : ''}`
+                  : 'Aucune critique'
+              }
+              badge={
+                <Badge
+                  value={
+                    data.alerts.filter((a) => a.level === 'error').length > 0
+                      ? 'error'
+                      : data.alerts.filter((a) => a.level === 'warning').length > 0
+                      ? 'warning'
+                      : 'ok'
+                  }
+                />
+              }
+              accent={
+                data.alerts.filter((a) => a.level === 'error').length > 0
+                  ? 'var(--color-error)'
+                  : data.alerts.filter((a) => a.level === 'warning').length > 0
+                  ? 'var(--color-warning)'
+                  : 'var(--color-success)'
+              }
             />
             <SummaryCard
               title="Validation"
@@ -900,63 +2854,267 @@ export function JarvisPersonalPage() {
               note={
                 data.pending_validation
                   ? String(data.pending_validation.action || 'Action réelle en attente')
-                  : 'Aucune action réelle bloquée'
+                  : 'Aucun blocage'
               }
               badge={<Badge value={data.pending_validation ? 'pending' : 'ok'} />}
               accent={data.pending_validation ? 'var(--color-warning)' : 'var(--color-success)'}
             />
             <SummaryCard
-              title="Dernière activité"
+              title="Activité"
               value={fmtAgo(general.age_seconds)}
-              note={`Mémoire courte : ${general.turn_count} tours`}
+              note={`${general.turn_count} tour${general.turn_count > 1 ? 's' : ''} en mémoire`}
               badge={<Clock3 size={15} style={{ color: 'var(--color-text-tertiary)' }} />}
-              accent="var(--color-accent-amber)"
+              accent="var(--color-accent)"
             />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_1fr] gap-3 mt-5">
+          {/* Next action + quick nav */}
+          <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-center">
             <GuidanceCard
-              title={derived.nextMove.title}
-              detail={derived.nextMove.detail}
-              hint="Ce cadrage reste descriptif : aucune action réelle n’est lancée depuis ce panneau."
+              title={data.priority_lane?.headline || derived.nextMove.title}
+              detail={data.priority_lane?.detail || derived.nextMove.detail}
             />
-            <div
-              className="rounded-2xl px-4 py-4"
-              style={{
-                background: 'color-mix(in srgb, var(--color-accent) 8%, var(--color-surface))',
-                border: '1px solid color-mix(in srgb, var(--color-accent) 22%, transparent)',
-              }}
-            >
-              <div className="text-xs uppercase tracking-[0.15em]" style={{ color: 'var(--color-text-tertiary)' }}>
-                Actions disponibles
-              </div>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <ActionButton
-                  label={derived.nextMove.actionLabel}
-                  icon={MoveRight}
-                  onClick={() => scrollToId(derived.nextMove.targetId)}
-                  disabled={!derived.nextMove.targetId}
-                />
-                <ActionButton label="Rafraîchir l’état" icon={RefreshCw} onClick={refresh} />
-                <ActionButton label="Aller à la validation" icon={AlertTriangle} onClick={() => scrollToId('pending-validation')} />
-                <ActionButton label="Aller au résultat" icon={Mail} onClick={() => scrollToId('yahoo-result')} />
-                <ActionButton label="Aller à la continuité" icon={Clock3} onClick={() => scrollToId('continuity-details')} />
-                <ActionButton
-                  label="Copier le chemin du handoff"
-                  icon={Copy}
-                  onClick={() => copyText(handoffPath, 'Chemin du handoff copié')}
-                  disabled={!handoffPath}
-                />
-                <ActionButton
-                  label="Copier le résumé Yahoo"
-                  icon={Copy}
-                  onClick={() => copyText(latestYahooSummary, 'Résumé Yahoo copié')}
-                  disabled={!latestYahooSummary}
-                />
-              </div>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton
+                label="Hermès"
+                icon={Sparkles}
+                onClick={() => scrollToId('hermes-chat')}
+              />
+              <ActionButton
+                label="Alertes"
+                icon={Bell}
+                onClick={() => scrollToId('alerts')}
+              />
+              <ActionButton
+                label="Projets"
+                icon={Layers}
+                onClick={() => scrollToId('projects')}
+              />
+              <ActionButton
+                label="Rafraîchir"
+                icon={RefreshCw}
+                onClick={refresh}
+              />
             </div>
           </div>
         </header>
+
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.05 }}>
+          <TodaySection alerts={derived.attentionCards} nextMove={derived.nextMove} />
+        </motion.div>
+
+        {/* Centre du cockpit : Hermès + Projets */}
+        <motion.div
+          className="grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-4 items-start"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, delay: 0.12 }}
+        >
+          <HermesPanel data={data} onReply={() => scrollToId('hermes-chat')} />
+          <ProjectsGrid cockpitData={data} />
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.19 }}>
+          <AlertsSection alerts={data.alerts} />
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.26 }}>
+          <IdeasInbox />
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.33 }}>
+          <MemoryGraphifySection fileHealth={data.file_health} />
+        </motion.div>
+
+        <Section
+          id="hermes-chat"
+          title="Discussion avec Hermès"
+          subtitle="Chat officiel Hermès. Une seule interface conversationnelle, branchée sur le backend OpenJarvis réel."
+          icon={Sparkles}
+        >
+          {!!data.hermes?.chat_runtime?.personalization?.summary_lines?.length && (
+            <div
+              className="rounded-2xl px-4 py-4 mb-4"
+              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+            >
+              <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                Contexte Ruth actif
+              </div>
+              <div className="mt-2 space-y-2">
+                {data.hermes.chat_runtime.personalization.summary_lines.slice(0, 4).map((line, index) => (
+                  <div key={`${index}-${line}`} className="text-sm" style={{ color: 'var(--color-text)' }}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div
+            className="rounded-2xl overflow-hidden"
+            style={{
+              background: 'var(--color-bg-secondary)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <HermesChatPanel
+              initialRuntime={data.hermes?.chat_runtime || null}
+              forceFocus={forceHermesChatFocus}
+            />
+          </div>
+        </Section>
+
+        <Section
+          id="ruth-memory"
+          title="Mémoire Ruth Active"
+          subtitle="Ce que Hermès lit réellement comme contexte compact Ruth avant de répondre."
+          icon={Brain}
+        >
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {([
+              ['Profil Ruth', data.hermes?.chat_runtime?.personalization?.profile || []],
+              ['Préférences de travail', data.hermes?.chat_runtime?.personalization?.preferences || []],
+              ['Règles Hermès', data.hermes?.chat_runtime?.personalization?.rules || []],
+              ['Mémoire validée', data.hermes?.chat_runtime?.personalization?.validated_memory || []],
+              ["Journal d'apprentissage", data.hermes?.chat_runtime?.personalization?.learning_journal || []],
+            ] as const).map(([title, items]) => (
+              <div
+                key={title}
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                  {title}
+                </div>
+                <div className="mt-3 space-y-2">
+                  {items.length ? (
+                    items.slice(0, 6).map((item, index) => (
+                      <div key={`${title}-${index}-${item}`} className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                        • {item}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Rien de compact disponible pour le moment.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div
+            className="rounded-2xl px-4 py-4 mt-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--color-text-tertiary)' }}>
+              Sources Obsidian utilisées
+            </div>
+            <div className="mt-3 space-y-2">
+              {(data.hermes?.chat_runtime?.personalization?.sources || []).map((source) => (
+                <div key={source.path} className="flex items-center justify-between gap-3 text-sm">
+                  <span style={{ color: 'var(--color-text)' }}>{source.label}</span>
+                  <Badge value={source.exists ? 'présente' : 'absente'} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+
+        <Section
+          id="cloud-budget"
+          title="Budget Cloud Et Clés"
+          subtitle="Suivi de la consommation estimée de tes providers et état de tes clés backend."
+          icon={ShieldCheck}
+          action={<Badge value={cloudBudgetFlag.label} />}
+        >
+          <div
+            className="rounded-2xl px-4 py-4 mb-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-xs uppercase tracking-[0.18em]" style={{ color: 'var(--color-text-tertiary)' }}>
+              Pourquoi Hermès choisit ce moteur
+            </div>
+            <div className="text-sm mt-1" style={{ color: 'var(--color-text)' }}>
+              {data.hermes?.chat_runtime?.selection_reason ||
+                "Hermès arbitre entre local, OpenRouter et OpenAI selon le mode demandé, le coût, la disponibilité et la sensibilité de la demande."}
+            </div>
+          </div>
+          <div
+            className="rounded-2xl px-4 py-4 mb-4"
+            style={{
+              background:
+                cloudBudgetFlag.tone === 'ok'
+                  ? 'color-mix(in srgb, var(--color-success) 10%, transparent)'
+                  : cloudBudgetFlag.tone === 'warning'
+                  ? 'color-mix(in srgb, var(--color-warning) 12%, transparent)'
+                  : 'color-mix(in srgb, var(--color-error) 12%, transparent)',
+              border:
+                cloudBudgetFlag.tone === 'ok'
+                  ? '1px solid color-mix(in srgb, var(--color-success) 26%, transparent)'
+                  : cloudBudgetFlag.tone === 'warning'
+                  ? '1px solid color-mix(in srgb, var(--color-warning) 30%, transparent)'
+                  : '1px solid color-mix(in srgb, var(--color-error) 30%, transparent)',
+            }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                {cloudBudgetFlag.label}
+              </div>
+              <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                {Math.round((data.hermes?.chat_runtime?.budget?.estimated_usage_ratio || 0) * 100)} % du budget mensuel utilisé
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <SummaryCard
+              title="Dépense du jour"
+              value={fmtUsd(data.hermes?.chat_runtime?.budget?.estimated_today_usd)}
+              note="Estimation Hermes"
+            />
+            <SummaryCard
+              title="Dépense du mois"
+              value={fmtUsd(data.hermes?.chat_runtime?.budget?.estimated_month_usd)}
+              note={`Sur ${fmtUsd(data.hermes?.chat_runtime?.budget?.budget_month_usd)}`}
+              accent="var(--color-accent-amber)"
+            />
+            <SummaryCard
+              title="Budget restant"
+              value={fmtUsd(data.hermes?.chat_runtime?.budget?.budget_remaining_usd)}
+              note="Blocage auto à 100 %"
+              accent="var(--color-success)"
+            />
+            <SummaryCard
+              title="Clés cloud"
+              value={String(data.hermes?.chat_runtime?.budget?.configured_provider_count ?? 0)}
+              note="Providers backend configurés"
+              accent="var(--color-accent-purple)"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+            {(data.hermes?.chat_runtime?.budget?.providers || []).map((provider) => (
+              <div
+                key={provider.id}
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                    {provider.label}
+                  </div>
+                  <Badge value={provider.id === 'local_ollama' ? 'gratuit' : provider.configured ? 'clé active' : 'clé absente'} />
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  <InfoChip label="Aujourd'hui" value={fmtUsd(provider.estimated_today_usd)} />
+                  <InfoChip label="Mois" value={fmtUsd(provider.estimated_month_usd)} />
+                </div>
+                <div className="text-xs mt-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {provider.last_model ? `Dernier modèle : ${provider.last_model}` : 'Pas encore utilisé ce mois-ci.'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
 
         <Section
           id="attention-now"
@@ -964,8 +3122,96 @@ export function JarvisPersonalPage() {
           subtitle="Le signal prioritaire, avant les détails."
           icon={Sparkles}
         >
-          <MiniAttentionRow items={derived.attentionCards} />
+          <MiniAttentionRow
+            items={
+              backendAttention.length > 0
+                ? backendAttention.map((item) => ({
+                    title: item.title,
+                    detail: item.detail,
+                    level: item.level === 'warning' ? 'warning' : item.level === 'ok' ? 'ok' : 'info',
+                  }))
+                : derived.attentionCards
+            }
+          />
         </Section>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-3">
+          <Section
+            title="Priorités Hermes"
+            subtitle="Ce que le noyau Hermes considère comme le prochain travail utile."
+            icon={Sparkles}
+          >
+            <div className="grid grid-cols-1 gap-3">
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="text-xs uppercase tracking-[0.14em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Priorité principale
+                </div>
+                <div className="text-base font-medium mt-2" style={{ color: 'var(--color-text)' }}>
+                  {String(priorities?.primary || data.priority_lane?.headline || 'Aucune priorité synthétisée.')}
+                </div>
+                <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                  {String(data.priority_lane?.detail || general.last_recommended_action || 'Aucune explication complémentaire.')}
+                </div>
+              </div>
+              {Array.isArray(priorities?.secondary) && priorities.secondary.length > 0 && (
+                <div
+                  className="rounded-2xl px-4 py-4"
+                  style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+                >
+                  <div className="text-xs uppercase tracking-[0.14em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Priorités secondaires
+                  </div>
+                  <div className="space-y-2">
+                    {priorities.secondary.slice(0, 2).map((item, index) => (
+                      <div key={`${item}-${index}`} className="text-sm" style={{ color: 'var(--color-text)' }}>
+                        {index + 1}. {item}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          <Section
+            title="Signaux Runtime"
+            subtitle="Lecture courte des trois couches utiles : Hermes, voix, Yahoo."
+            icon={Radio}
+          >
+            <div className="space-y-3">
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Hermes</div>
+                  <Badge value={String(signals.hermes?.status || hermes.overall || 'unknown')} />
+                </div>
+                <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                  {String(signals.hermes?.top_next_action || signals.hermes?.last_recommended_action || 'Aucun signal Hermes détaillé.')}
+                </div>
+              </div>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Voix</div>
+                  <Badge value={String(signals.voice?.status || general.status || 'unknown')} />
+                </div>
+                <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                  {String(signals.voice?.live_status || general.live_status || 'n/a')} · {String(signals.voice?.wake_word || data.voice_live.wake_word || 'n/a')}
+                </div>
+              </div>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Yahoo</div>
+                  <Badge value={String(signals.yahoo?.status || 'unknown')} />
+                </div>
+                <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                  {String(signals.yahoo?.last_summary || derived.latestOperationalSummary || 'Aucun signal Yahoo récent.')}
+                </div>
+              </div>
+            </div>
+          </Section>
+        </div>
 
         <Section
           title="Derniers Échanges Vocaux"
@@ -1049,6 +3295,248 @@ export function JarvisPersonalPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.75fr] gap-3">
+          <Section
+            id="hermes-core"
+            title="Hermes Core"
+            subtitle="Le runtime Hermes maintenant branché comme source de vérité complémentaire."
+            icon={Sparkles}
+          >
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="space-y-1">
+                  <MetricRow label="Statut Hermes" value={<Badge value={String(hermes.overall || 'unknown')} />} />
+                  <MetricRow label="Intent actif" value={String(general.active_intent || 'n/a')} />
+                  <MetricRow
+                    label="Dernier skill"
+                    value={String((general.last_skill_run?.label as string) || (general.last_skill_run?.skill as string) || 'n/a')}
+                  />
+                  <MetricRow label="Action recommandée" value={String(general.last_recommended_action || 'n/a')} />
+                </div>
+              </div>
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="text-xs uppercase tracking-[0.14em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Prochaines actions Hermes
+                </div>
+                <div className="space-y-2">
+                  {hermesNextActions.length === 0 && (
+                    <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Aucune action Hermes synthétisée.
+                    </div>
+                  )}
+                  {hermesNextActions.slice(0, 3).map((item, index) => (
+                    <div key={index} className="rounded-xl px-3 py-3" style={{ background: 'var(--color-surface)' }}>
+                      <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                        {index + 1}. {String(item.label || 'n/a')}
+                      </div>
+                      {Boolean(item.why) && (
+                        <div className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                          {String(item.why)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-xs uppercase tracking-[0.14em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Délégation gouvernée
+                  </div>
+                  <Badge value={String(delegation.delegation_status || 'inactive')} />
+                </div>
+                <div className="space-y-1">
+                  <MetricRow label="Validation" value={<Badge value={String(delegation.validation_status || 'unknown')} />} />
+                  <MetricRow label="Cible" value={String(delegation.delegation_target || 'n/a')} />
+                  <MetricRow label="Packet prêt" value={<Badge value={delegation.packet_ready ? 'oui' : 'non'} />} />
+                  <MetricRow
+                    label="Résolution outil"
+                    value={<Badge value={String(delegation.tool_resolution_mode || 'unknown')} />}
+                  />
+                  <MetricRow label="Coût" value={String(delegation.tool_resolution_cost || 'unknown')} />
+                  <MetricRow label="Fallback" value={String(delegation.tool_fallback || 'n/a')} />
+                </div>
+                <div className="text-sm mt-3" style={{ color: 'var(--color-text-secondary)' }}>
+                  {String(delegation.handoff_summary || 'Aucun handoff gouverné actif pour le moment.')}
+                </div>
+                <div className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Validation gate : {String(delegation.tool_validation_gate || delegation.validation_status || 'unknown')}
+                </div>
+              </div>
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div className="text-xs uppercase tracking-[0.14em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Résultat de délégation
+                  </div>
+                  <Badge value={String(delegation.result_status || delegation.lifecycle_status || 'en attente')} />
+                </div>
+                <div className="space-y-1">
+                  <MetricRow label="Cycle" value={String(delegation.lifecycle_status || 'n/a')} />
+                  <MetricRow label="Statut résultat" value={String(delegation.result_status || 'n/a')} />
+                  <MetricRow label="Dernière mise à jour" value={fmtDate(String(delegation.result_logged_at || ''))} />
+                </div>
+                <div className="text-sm mt-3" style={{ color: 'var(--color-text-secondary)' }}>
+                  {String(delegation.result_summary || 'Aucun résultat exécuteur enregistré pour le moment.')}
+                </div>
+              </div>
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Dernier risk guard
+                </div>
+                <div className="text-sm" style={{ color: 'var(--color-text)' }}>
+                  {riskGuard.overall_risk_level ? `Risque ${String(riskGuard.overall_risk_level)}` : 'Aucun diagnostic récent.'}
+                </div>
+                {Boolean(riskGuard.recommended_response) && (
+                  <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    {String(riskGuard.recommended_response)}
+                  </div>
+                )}
+              </div>
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Dernière clôture Hermes
+                </div>
+                <div className="text-sm" style={{ color: 'var(--color-text)' }}>
+                  {sessionCloser.summary ? String(sessionCloser.summary) : 'Aucune clôture récente.'}
+                </div>
+                {Boolean(sessionCloser.next_step) && (
+                  <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    Prochain pas : {String(sessionCloser.next_step)}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mt-3">
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="text-xs uppercase tracking-[0.14em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Discovery outil
+                  </div>
+                  <Badge
+                    value={
+                      toolResearch.required
+                        ? String(toolResearch.status || 'research_needed')
+                        : 'non requis'
+                    }
+                  />
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <MetricRow label="Requête marché" value={toolResearch.required ? 'oui' : 'non'} />
+                    <MetricRow label="Outil recommandé" value={String(toolResearch.recommended_tool || 'n/a')} />
+                    <MetricRow label="Alternative gratuite" value={String(toolResearch.free_alternative || 'n/a')} />
+                    <MetricRow label="Alternative payante" value={String(toolResearch.paid_alternative || 'n/a')} />
+                    <MetricRow label="Coût cible" value={String(toolResearch.cost_level || 'unknown')} />
+                    <MetricRow label="Dernière vérif" value={fmtDate(String(toolResearch.last_checked_at || ''))} />
+                  </div>
+                  <div>
+                    <div className="text-sm" style={{ color: 'var(--color-text)' }}>
+                      {String(toolResearch.recommended_next_step || toolResearch.reason || 'Aucune comparaison outil active.')}
+                    </div>
+                    {Array.isArray(toolResearch.candidate_tools) && toolResearch.candidate_tools.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {toolResearch.candidate_tools.slice(0, 6).map((tool, index) => (
+                          <InfoChip key={`${String(tool)}-${index}`} label={`Option ${index + 1}`} value={String(tool)} />
+                        ))}
+                      </div>
+                    )}
+                    {Array.isArray(toolResearch.signals) && toolResearch.signals.length > 0 && (
+                      <div className="text-xs mt-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                        Signaux runtime : {toolResearch.signals.map((signal) => String(signal)).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-3">
+              <div
+                className="rounded-2xl px-4 py-4"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="text-xs uppercase tracking-[0.14em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Hermes Orchestrateur V1
+                  </div>
+                  <Badge
+                    value={
+                      orchestrator.current_request ||
+                      orchestrator.current_packet ||
+                      orchestrator.current_tool_decision ||
+                      orchestratorTrace.length > 0
+                        ? 'actif'
+                        : 'repos'
+                    }
+                  />
+                </div>
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                  <OrchestratorRecordCard title="Requête courante" payload={orchestrator.current_request} />
+                  <OrchestratorRecordCard title="Paquet courant" payload={orchestrator.current_packet} />
+                  <OrchestratorRecordCard title="Décision outil courante" payload={orchestrator.current_tool_decision} />
+                </div>
+                {Boolean(toolResearch.required) && (
+                  <div className="grid grid-cols-1 mt-3">
+                    <OrchestratorRecordCard title="Recherche outil courante" payload={orchestrator.current_tool_research || toolResearch} />
+                  </div>
+                )}
+                <div className="mt-3">
+                  <div className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Trace récente
+                  </div>
+                  {orchestratorTrace.length === 0 ? (
+                    <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Aucune trace orchestrateur disponible pour le moment.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {orchestratorTrace.slice(0, 4).map((item, index) => (
+                        <div
+                          key={`${String(item.timestamp || item.step || item.tool || 'trace')}-${index}`}
+                          className="rounded-xl px-3 py-3"
+                          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border-subtle)' }}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge value={String(item.status || item.decision || 'trace')} />
+                            {Boolean(item.tool) && <InfoChip label="Outil" value={String(item.tool)} />}
+                            {Boolean(item.step) && <InfoChip label="Étape" value={String(item.step)} />}
+                            {Boolean(item.timestamp) && <InfoChip label="Quand" value={fmtDate(String(item.timestamp))} />}
+                          </div>
+                          <div className="text-sm mt-2" style={{ color: 'var(--color-text)' }}>
+                            {compactValuePreview(item.summary) ||
+                              compactValuePreview(item.decision) ||
+                              compactValuePreview(item)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Section>
+
           <Section
             id="yahoo-result"
             title="Dernier résultat opérationnel"
@@ -1181,6 +3669,17 @@ export function JarvisPersonalPage() {
               <div className="text-sm mt-2" style={{ color: 'var(--color-text)' }}>
                 {derived.connectorSummary}
               </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {Array.isArray(data.connectors_overview?.healthy) && data.connectors_overview.healthy.length > 0 && (
+                  <InfoChip label="OK" value={data.connectors_overview.healthy.join(', ')} />
+                )}
+                {Array.isArray(data.connectors_overview?.attention) && data.connectors_overview.attention.length > 0 && (
+                  <InfoChip label="Attention" value={data.connectors_overview.attention.join(', ')} />
+                )}
+                {Array.isArray(data.connectors_overview?.offline) && data.connectors_overview.offline.length > 0 && (
+                  <InfoChip label="Hors ligne" value={data.connectors_overview.offline.join(', ')} />
+                )}
+              </div>
             </div>
             <div className="space-y-3">
               {data.connectors.map((connector) => (
@@ -1194,7 +3693,16 @@ export function JarvisPersonalPage() {
                   <div className="text-xs mt-2" style={{ color: 'var(--color-text-secondary)' }}>
                     Mis à jour : {fmtDate(connector.updated_at)}
                   </div>
+                  {connector.summary && (
+                    <div className="text-sm mt-2" style={{ color: 'var(--color-text)' }}>
+                      {connector.summary}
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2 mt-3">
+                    {connector.stale_seconds != null && (
+                      <InfoChip label="Âge" value={fmtAgo(connector.stale_seconds)} />
+                    )}
+                    {connector.attention_needed && <InfoChip label="État" value="À surveiller" />}
                     {Object.entries(connector.services || {}).map(([name, value]) => (
                       <span
                         key={name}

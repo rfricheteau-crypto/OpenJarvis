@@ -1,4 +1,11 @@
-import type { ModelInfo, PersonalCockpitSnapshot, SavingsData, ServerInfo } from '../types';
+import type {
+  ModelInfo,
+  PersonalCockpitChatMessage,
+  PersonalCockpitChatResponse,
+  PersonalCockpitSnapshot,
+  SavingsData,
+  ServerInfo,
+} from '../types';
 
 // ---------------------------------------------------------------------------
 // Supabase config — safe to embed (RLS protects writes)
@@ -228,6 +235,151 @@ export async function fetchPersonalCockpit(): Promise<PersonalCockpitSnapshot> {
   return res.json();
 }
 
+export interface ObsidianIdeaItem {
+  id: string;
+  text: string;
+  tag: string;
+  done: boolean;
+  section: string;
+  obsidian_path: string;
+}
+
+export async function fetchIdeas(): Promise<ObsidianIdeaItem[]> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/ideas`);
+  if (!res.ok) throw new Error(`Failed to fetch ideas: ${res.status}`);
+  return res.json();
+}
+
+export async function createIdea(
+  text: string,
+  tag: string,
+  date: string,
+): Promise<{ obsidian_path: string; section: string; ok: boolean }> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/ideas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, tag, date }),
+  });
+  if (!res.ok) throw new Error(`Failed to create idea: ${res.status}`);
+  return res.json();
+}
+
+export interface AdvSnapshot {
+  generated_at?: string;
+  _age_seconds?: number;
+  _stale?: boolean;
+  _empty?: boolean;
+  business?: { mrr?: number; arr?: number; ca_mensuel?: number; ca_annuel?: number; ca_total?: number; revenus_abonnements?: number; revenus_credits?: number };
+  abonnements?: { actifs?: number; starter?: number; pro?: number; premium?: number; mensuel?: number; annuel?: number; essais_actifs?: number; churn_rate?: number; annulations?: number; conversions_essai_payant?: number };
+  utilisateurs?: { total?: number; actifs_30j?: number; nouveaux_semaine?: number; payants?: number; essai?: number; inactifs?: number };
+  usage?: { devis_total?: number; factures_total?: number; docs_semaine?: number; docs_mois?: number; echecs_vocal?: number; echecs_pdf?: number; echecs_email?: number };
+  sante_technique?: { services?: Record<string, string>; dernier_incident?: string | null; erreurs_worker_24h?: number };
+  lancement?: { taches_restantes?: number; blocages_critiques?: string[]; dernier_commit?: string | null };
+  marketing?: { prospects?: number; leads?: number; contenus_publies?: number };
+  objectifs_ruth?: { objectif_mrr_1?: number; objectif_mrr_2?: number; mrr_actuel?: number; progression_pct?: number };
+}
+
+export async function fetchAdvSnapshot(): Promise<AdvSnapshot> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/adv-snapshot`);
+  if (!res.ok) throw new Error(`Failed to fetch ADV snapshot: ${res.status}`);
+  return res.json();
+}
+
+export interface AdvObsidian {
+  adv_state?: string;
+  adv_state_path?: string;
+  codex_current_state?: string;
+  codex_current_state_path?: string;
+  juridique?: string;
+  juridique_path?: string;
+  codex_log?: string;
+  codex_log_path?: string;
+}
+
+export async function fetchAdvObsidian(): Promise<AdvObsidian> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/adv-obsidian`);
+  if (!res.ok) throw new Error(`Failed to fetch ADV Obsidian: ${res.status}`);
+  return res.json();
+}
+
+export interface HermesTraceEntry {
+  event_type: string;
+  status: string;
+  tool: string;
+  notes: string;
+}
+
+export interface HermesTrace {
+  entries: HermesTraceEntry[];
+  updated_at: string;
+  count: number;
+}
+
+export async function fetchHermesTrace(): Promise<HermesTrace> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes-trace`);
+  if (!res.ok) throw new Error(`Failed to fetch Hermès trace: ${res.status}`);
+  return res.json();
+}
+
+export async function toggleIdea(
+  text: string,
+  section: string,
+  done: boolean,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/ideas`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, section, done }),
+  });
+  if (!res.ok) throw new Error(`Failed to toggle idea: ${res.status}`);
+  return res.json();
+}
+
+export async function sendPersonalCockpitChat(
+  message: string,
+  history: PersonalCockpitChatMessage[],
+  engineMode: 'auto' | 'economy' | 'quality' | 'local' | 'openai' = 'auto',
+  sessionId?: string,
+): Promise<PersonalCockpitChatResponse> {
+  let openaiKey = '';
+  let openrouterKey = '';
+  try {
+    openaiKey = localStorage.getItem('openjarvis-openai-key') || '';
+    openrouterKey = localStorage.getItem('openjarvis-openrouter-key') || '';
+  } catch {}
+  const requestInit: RequestInit = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(openaiKey ? { 'X-Hermes-OpenAI-Key': openaiKey } : {}),
+      ...(openrouterKey ? { 'X-Hermes-OpenRouter-Key': openrouterKey } : {}),
+    },
+    body: JSON.stringify({
+      message,
+      history,
+      engine_mode: engineMode,
+      session_id: sessionId,
+    }),
+  };
+  let res: Response;
+  try {
+    res = await fetch(`${getBase()}/api/hermes/chat`, {
+      ...requestInit,
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch {
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    res = await fetch(`${getBase()}/api/hermes/chat`, {
+      ...requestInit,
+      signal: AbortSignal.timeout(45000),
+    });
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to chat with Hermes: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchTraces(limit: number = 50): Promise<unknown> {
   if (isTauri()) {
     try {
@@ -288,6 +440,35 @@ export async function fetchSpeechHealth(): Promise<SpeechHealth> {
   }
   const res = await fetch(`${getBase()}/v1/speech/health`);
   if (!res.ok) return { available: false };
+  return res.json();
+}
+
+export async function fetchCloudKeyStatus(): Promise<{
+  path: string;
+  status: Record<string, boolean>;
+}> {
+  const res = await fetch(`${getBase()}/v1/cloud/keys/status`);
+  if (!res.ok) throw new Error(`Cloud key status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function saveCloudKeys(payload: Record<string, string>): Promise<{
+  saved: string[];
+  status: Record<string, boolean>;
+  path: string;
+}> {
+  const res = await fetch(`${getBase()}/v1/cloud/keys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Cloud key save failed: ${res.status}`);
+  return res.json();
+}
+
+export async function reloadCloudKeys(): Promise<{ status: string; message: string }> {
+  const res = await fetch(`${getBase()}/v1/cloud/reload`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Cloud key reload failed: ${res.status}`);
   return res.json();
 }
 
