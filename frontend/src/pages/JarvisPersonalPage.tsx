@@ -420,6 +420,126 @@ function OrchestratorRecordCard({
   );
 }
 
+type PendingValidation = {
+  id: string;
+  project: string;
+  title: string;
+  source: string;
+  why_pending: string;
+  expected_action: string;
+  owner: 'Ruth' | 'Claude' | 'Codex' | 'Hermès';
+  status: 'real' | 'mock' | 'partial' | 'to_connect' | 'done';
+  priority: 'urgent' | 'high' | 'medium' | 'low';
+  updated_at: string;
+};
+
+const PRIORITY_COLOR: Record<string, string> = {
+  urgent: 'var(--color-error)',
+  high: 'var(--color-warning)',
+  medium: 'var(--color-accent-blue)',
+  low: 'var(--color-text-secondary)',
+};
+
+const OWNER_COLOR: Record<string, string> = {
+  Ruth: 'var(--color-accent-purple)',
+  Claude: 'var(--color-accent-blue)',
+  Codex: 'var(--color-success)',
+  'Hermès': 'var(--color-warning)',
+};
+
+function PendingValidationsList({
+  items,
+}: {
+  items: PendingValidation[];
+}) {
+  const active = items.filter((v) => v.status !== 'done');
+
+  if (active.length === 0) {
+    return (
+      <div
+        className="rounded-2xl px-4 py-4"
+        style={{
+          background: 'color-mix(in srgb, var(--color-success) 10%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--color-success) 24%, transparent)',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <CheckCircle2 size={16} style={{ color: 'var(--color-success)' }} />
+          <div className="font-semibold" style={{ color: 'var(--color-text)' }}>
+            Aucune validation en attente
+          </div>
+        </div>
+        <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+          Toutes les validations sont traitées.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {active.map((v) => (
+        <div
+          key={v.id}
+          className="rounded-2xl px-4 py-4"
+          style={{
+            background: 'color-mix(in srgb, var(--color-bg-card) 80%, transparent)',
+            border: `1px solid color-mix(in srgb, ${PRIORITY_COLOR[v.priority] || 'var(--color-border)'} 35%, transparent)`,
+          }}
+        >
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={14} style={{ color: PRIORITY_COLOR[v.priority] || 'var(--color-warning)', flexShrink: 0 }} />
+              <span className="font-semibold text-sm" style={{ color: 'var(--color-text)' }}>
+                {v.title}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span
+                className="text-xs font-medium px-2 py-0.5 rounded-full"
+                style={{
+                  background: `color-mix(in srgb, ${PRIORITY_COLOR[v.priority]} 15%, transparent)`,
+                  color: PRIORITY_COLOR[v.priority],
+                }}
+              >
+                {v.priority}
+              </span>
+              <span
+                className="text-xs font-medium px-2 py-0.5 rounded-full"
+                style={{
+                  background: `color-mix(in srgb, ${OWNER_COLOR[v.owner] || 'var(--color-text-secondary)'} 15%, transparent)`,
+                  color: OWNER_COLOR[v.owner] || 'var(--color-text-secondary)',
+                }}
+              >
+                {v.owner}
+              </span>
+            </div>
+          </div>
+          <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+            {v.why_pending}
+          </div>
+          <div
+            className="text-sm mt-2 px-3 py-2 rounded-xl"
+            style={{
+              background: 'color-mix(in srgb, var(--color-accent-blue) 8%, transparent)',
+              color: 'var(--color-text)',
+            }}
+          >
+            <span style={{ color: 'var(--color-text-secondary)' }}>Action : </span>
+            {v.expected_action}
+          </div>
+          <div className="flex flex-wrap gap-2 mt-3">
+            <InfoChip label="Projet" value={v.project} />
+            <InfoChip label="Statut" value={v.status} />
+            <InfoChip label="Source" value={v.source.split('·')[0].trim()} />
+            <InfoChip label="Mis à jour" value={fmtDate(v.updated_at)} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PendingValidationCard({
   pending,
 }: {
@@ -437,7 +557,7 @@ function PendingValidationCard({
         <div className="flex items-center gap-2">
           <CheckCircle2 size={16} style={{ color: 'var(--color-success)' }} />
           <div className="font-semibold" style={{ color: 'var(--color-text)' }}>
-            Aucune validation en attente
+            Aucune validation vocale en attente
           </div>
         </div>
         <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
@@ -462,7 +582,7 @@ function PendingValidationCard({
       <div className="flex items-center gap-2">
         <AlertTriangle size={16} style={{ color: 'var(--color-warning)' }} />
         <div className="font-semibold" style={{ color: 'var(--color-text)' }}>
-          Validation attendue maintenant
+          Validation vocale attendue maintenant
         </div>
       </div>
       <div className="text-base font-medium mt-3" style={{ color: 'var(--color-text)' }}>
@@ -1286,24 +1406,31 @@ function AdvProjectCard({
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
         {([
-          ['MRR', mrr],
-          ['Abonnements', abos],
-          ['Utilisateurs', users],
-          ['Churn', churn],
-          ['Devis générés', devis],
-          ['Factures générées', factures],
-          ['Crédits IA', `${ADV_KPI_MOCK.creditsConsumed} tokens`],
-          ['Lancement', ADV_KPI_MOCK.launch],
-        ] as [string, string | number][]).map(([label, value]) => (
+          ['MRR', mrr, !isLive],
+          ['Abonnements', abos, !isLive],
+          ['Utilisateurs', users, !isLive],
+          ['Churn', churn, !isLive],
+          ['Devis générés', devis, !isLive],
+          ['Factures générées', factures, !isLive],
+          ['Crédits IA', `${ADV_KPI_MOCK.creditsConsumed} tokens`, true],
+          ['Lancement', ADV_KPI_MOCK.launch, true],
+        ] as [string, string | number, boolean][]).map(([label, value, isMock]) => (
           <div
             key={label}
             className="rounded-xl px-3 py-2"
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
           >
-            <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--color-text-tertiary)' }}>
-              {label}
+            <div className="flex items-center gap-1.5">
+              <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--color-text-tertiary)' }}>
+                {label}
+              </div>
+              {isMock && (
+                <span style={{ fontSize: '8px', fontWeight: 700, color: 'var(--color-warning)', background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', borderRadius: '3px', padding: '0px 4px', letterSpacing: '0.06em' }}>
+                  MOCK
+                </span>
+              )}
             </div>
-            <div className="text-sm font-semibold mt-0.5" style={{ color: accent }}>
+            <div className="text-sm font-semibold mt-0.5" style={{ color: isMock ? 'var(--color-text-tertiary)' : accent }}>
               {String(value)}
             </div>
           </div>
@@ -1329,8 +1456,15 @@ function AdvProjectCard({
           className="rounded-xl px-3 py-2.5"
           style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
         >
-          <div className="text-[10px] uppercase tracking-[0.12em] mb-1" style={{ color: 'var(--color-text-tertiary)' }}>
-            Prochaine action ADV
+          <div className="flex items-center gap-1.5 mb-1">
+            <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--color-text-tertiary)' }}>
+              Prochaine action ADV
+            </div>
+            {!isLive && (
+              <span style={{ fontSize: '8px', fontWeight: 700, color: 'var(--color-warning)', background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)', borderRadius: '3px', padding: '0px 4px', letterSpacing: '0.06em' }}>
+                MOCK
+              </span>
+            )}
           </div>
           <div className="text-xs" style={{ color: 'var(--color-text)' }}>
             {ADV_KPI_MOCK.nextAction}
@@ -2250,9 +2384,11 @@ const TODAY_STORAGE_KEY = 'ruth_today_priorities';
 function TodaySection({
   alerts,
   nextMove,
+  pendingValidations,
 }: {
   alerts: Array<{ title: string; detail: string; level: 'warning' | 'info' | 'ok' }>;
   nextMove: { title: string; detail: string; actionLabel: string; targetId: string };
+  pendingValidations: PendingValidation[];
 }) {
   const [priorities, setPriorities] = useState<Array<{ id: string; text: string; done: boolean }>>(() => {
     try {
@@ -2283,6 +2419,8 @@ function TodaySection({
   const deleteItem = (id: string) => setPriorities((p) => p.filter((item) => item.id !== id));
 
   const activeAlerts = alerts.filter((a) => a.level !== 'ok');
+  const activePvs = pendingValidations.filter((v) => v.status !== 'done');
+  const topPv = activePvs.find((v) => v.priority === 'urgent') ?? activePvs[0];
 
   return (
     <Section id="today" title="Aujourd'hui" icon={CalendarDays}>
@@ -2356,11 +2494,51 @@ function TodaySection({
         </div>
 
         <div className="flex flex-col gap-3">
-          {activeAlerts.length > 0 ? (
+          {topPv && (
+            <div
+              className="rounded-2xl px-4 py-3"
+              style={{
+                background: topPv.priority === 'urgent'
+                  ? 'color-mix(in srgb, var(--color-error) 10%, var(--color-surface))'
+                  : 'color-mix(in srgb, var(--color-warning) 10%, var(--color-surface))',
+                border: `1px solid color-mix(in srgb, ${topPv.priority === 'urgent' ? 'var(--color-error)' : 'var(--color-warning)'} 30%, transparent)`,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={13} style={{ color: topPv.priority === 'urgent' ? 'var(--color-error)' : 'var(--color-warning)', flexShrink: 0 }} />
+                  <span className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: topPv.priority === 'urgent' ? 'var(--color-error)' : 'var(--color-warning)' }}>
+                    À valider · {topPv.project}
+                  </span>
+                </div>
+                {activePvs.length > 1 && (
+                  <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                    +{activePvs.length - 1} autre{activePvs.length > 2 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                {topPv.title}
+              </div>
+              <div className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                {topPv.expected_action.length > 100 ? topPv.expected_action.slice(0, 100) + '…' : topPv.expected_action}
+              </div>
+              <button
+                onClick={() => document.getElementById('pending-validation')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="text-xs mt-2 cursor-pointer"
+                style={{ color: 'var(--color-accent-blue)', textDecoration: 'underline', background: 'none', border: 'none', padding: 0 }}
+              >
+                Voir toutes les validations ({activePvs.length})
+              </button>
+            </div>
+          )}
+          {activeAlerts.length > 0 && !topPv ? (
             activeAlerts.slice(0, 2).map((a, i) => (
               <AttentionCard key={i} title={a.title} detail={a.detail} level={a.level} />
             ))
-          ) : (
+          ) : activeAlerts.length > 0 && topPv ? (
+            <AttentionCard title={activeAlerts[0].title} detail={activeAlerts[0].detail} level={activeAlerts[0].level} />
+          ) : !topPv ? (
             <div
               className="rounded-2xl px-4 py-4"
               style={{
@@ -2371,11 +2549,11 @@ function TodaySection({
               <div className="flex items-center gap-2">
                 <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
                 <span className="text-sm font-medium" style={{ color: 'var(--color-success)' }}>
-                  {"Aucune alerte active"}
+                  {"Aucune alerte active · Aucune validation en attente"}
                 </span>
               </div>
             </div>
-          )}
+          ) : null}
           <GuidanceCard title={nextMove.title} detail={nextMove.detail} />
         </div>
       </div>
@@ -2610,16 +2788,25 @@ export function JarvisPersonalPage() {
 
     const attentionCards: Array<{ title: string; detail: string; level: 'warning' | 'info' | 'ok' }> = [];
 
-    if (data.pending_validation) {
+    const pvs = (data.pending_validations ?? []) as PendingValidation[];
+    const activePvs = pvs.filter((v) => v.status !== 'done');
+    const topPv = activePvs.find((v) => v.priority === 'urgent') ?? activePvs[0];
+    if (topPv) {
       attentionCards.push({
-        title: 'Validation en attente',
+        title: `À valider : ${topPv.title}`,
+        detail: `${topPv.expected_action}${activePvs.length > 1 ? ` (+${activePvs.length - 1} autre${activePvs.length > 2 ? 's' : ''})` : ''}`,
+        level: topPv.priority === 'urgent' ? 'warning' : 'info',
+      });
+    } else if (data.pending_validation) {
+      attentionCards.push({
+        title: 'Validation Hermès en attente',
         detail: String(data.pending_validation.action || 'Une action réelle attend une validation.'),
         level: 'warning',
       });
     } else {
       attentionCards.push({
         title: 'Aucune validation bloquante',
-        detail: "Aucune action réelle n'attend une confirmation vocale maintenant.",
+        detail: "Aucun blocage en attente maintenant.",
         level: 'ok',
       });
     }
@@ -2676,10 +2863,17 @@ export function JarvisPersonalPage() {
       targetId: 'yahoo-result',
     };
 
-    if (data.pending_validation) {
+    if (topPv) {
       nextMove = {
-        title: 'Traiter la validation en attente',
-        detail: "Le prochain geste sûr est de relire exactement l'action en attente, puis de décider si Ruth veut répondre vocalement oui ou non.",
+        title: `Traiter : ${topPv.title}`,
+        detail: `${topPv.project} — ${topPv.expected_action}`,
+        actionLabel: 'Voir les validations',
+        targetId: 'pending-validation',
+      };
+    } else if (data.pending_validation) {
+      nextMove = {
+        title: 'Traiter la validation vocale en attente',
+        detail: "Jarvis attend un oui/non explicite avant toute exécution réelle.",
         actionLabel: 'Ouvrir la validation',
         targetId: 'pending-validation',
       };
@@ -2848,17 +3042,42 @@ export function JarvisPersonalPage() {
                   : 'var(--color-success)'
               }
             />
-            <SummaryCard
-              title="Validation"
-              value={data.pending_validation ? 'En attente' : 'Rien à valider'}
-              note={
-                data.pending_validation
-                  ? String(data.pending_validation.action || 'Action réelle en attente')
-                  : 'Aucun blocage'
-              }
-              badge={<Badge value={data.pending_validation ? 'pending' : 'ok'} />}
-              accent={data.pending_validation ? 'var(--color-warning)' : 'var(--color-success)'}
-            />
+            {(() => {
+              const pvs = (data.pending_validations ?? []) as PendingValidation[];
+              const active = pvs.filter((v) => v.status !== 'done');
+              const topUrgent = active.find((v) => v.priority === 'urgent') ?? active[0];
+              const urgentCount = active.filter((v) => v.priority === 'urgent').length;
+              const highCount = active.filter((v) => v.priority === 'high').length;
+              const topAccent = topUrgent?.priority === 'urgent'
+                ? 'var(--color-error)'
+                : topUrgent?.priority === 'high'
+                ? 'var(--color-warning)'
+                : active.length > 0 ? 'var(--color-accent-blue)' : 'var(--color-success)';
+              return (
+                <SummaryCard
+                  title="Validations"
+                  value={
+                    active.length > 0
+                      ? `${active.length} en attente`
+                      : 'Rien à valider'
+                  }
+                  note={
+                    topUrgent
+                      ? <><span style={{ color: topAccent, fontWeight: 600 }}>
+                          {urgentCount > 0 ? `${urgentCount} critique${urgentCount > 1 ? 's' : ''}` : highCount > 0 ? `${highCount} haute${highCount > 1 ? 's' : ''}` : ''}
+                        </span>{' '}
+                        {topUrgent.project} · <a onClick={() => scrollToId('pending-validation')} style={{ cursor: 'pointer', textDecoration: 'underline', color: 'var(--color-text-secondary)' }}>voir liste</a></>
+                      : 'Aucun blocage'
+                  }
+                  badge={
+                    active.length > 0
+                      ? <span style={{ fontSize: '11px', fontWeight: 700, color: topAccent, background: `color-mix(in srgb, ${topAccent} 15%, transparent)`, borderRadius: '9999px', padding: '2px 8px' }}>{active.length}</span>
+                      : <Badge value="ok" />
+                  }
+                  accent={topAccent}
+                />
+              );
+            })()}
             <SummaryCard
               title="Activité"
               value={fmtAgo(general.age_seconds)}
@@ -2900,7 +3119,11 @@ export function JarvisPersonalPage() {
         </header>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.05 }}>
-          <TodaySection alerts={derived.attentionCards} nextMove={derived.nextMove} />
+          <TodaySection
+            alerts={derived.attentionCards}
+            nextMove={derived.nextMove}
+            pendingValidations={(data.pending_validations ?? []) as PendingValidation[]}
+          />
         </motion.div>
 
         {/* Centre du cockpit : Hermès + Projets */}
@@ -3244,17 +3467,32 @@ export function JarvisPersonalPage() {
           </div>
         </Section>
 
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-          <Section
-            id="pending-validation"
-            title="Validation et état voix"
-            subtitle="Le centre de décision immédiat."
-            icon={ShieldCheck}
-          >
-            <div className="mb-4">
+        <Section
+          id="pending-validation"
+          title={`Validations en attente${(data.pending_validations_count ?? 0) > 0 ? ` (${data.pending_validations_count})` : ''}`}
+          subtitle="Chaque validation : projet, source, pourquoi bloquée, qui doit agir."
+          icon={ShieldCheck}
+        >
+          <PendingValidationsList
+            items={(data.pending_validations ?? []) as PendingValidation[]}
+          />
+          {data.pending_validation && (
+            <div className="mt-4">
+              <div className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                Validation vocale Hermès (runtime)
+              </div>
               <PendingValidationCard pending={data.pending_validation} />
             </div>
+          )}
+        </Section>
 
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <Section
+            id="voice-state"
+            title="État voix"
+            subtitle="Configuration et statut du pipeline vocal."
+            icon={Mic}
+          >
             <div className="space-y-1">
               <MetricRow label="Mode voix" value={<Badge value={general.status || 'unknown'} />} />
               <MetricRow label="Voix live" value={<Badge value={general.live_status || 'idle'} />} />
@@ -3266,7 +3504,7 @@ export function JarvisPersonalPage() {
           <Section
             id="alerts-section"
             title="Alertes récentes"
-            subtitle="Incidents, validations ou signaux faibles à traiter."
+            subtitle="Incidents ou signaux faibles à traiter."
             icon={AlertTriangle}
           >
             <div className="space-y-3">

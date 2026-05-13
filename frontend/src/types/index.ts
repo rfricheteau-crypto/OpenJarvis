@@ -274,6 +274,19 @@ export interface PersonalCockpitSnapshot {
   latest_transcription: string;
   latest_response: string;
   pending_validation?: PersonalCockpitRecord | null;
+  pending_validations?: Array<{
+    id: string;
+    project: string;
+    title: string;
+    source: string;
+    why_pending: string;
+    expected_action: string;
+    owner: string;
+    status: string;
+    priority: string;
+    updated_at: string;
+  }>;
+  pending_validations_count?: number;
   last_live_brief?: PersonalCockpitRecord | null;
   yahoo_targeted_move?: PersonalCockpitRecord | null;
   yahoo_dynamic_candidate?: PersonalCockpitRecord | null;
