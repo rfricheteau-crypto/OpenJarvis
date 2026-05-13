@@ -447,11 +447,19 @@ const OWNER_COLOR: Record<string, string> = {
   'Hermès': 'var(--color-warning)',
 };
 
+const OWNER_INSTRUCTION: Record<string, string> = {
+  Ruth: 'À faire par Ruth',
+  Claude: 'À faire par Claude',
+  Codex: 'À faire par Codex',
+  'Hermès': 'À router par Hermès',
+};
+
 function PendingValidationsList({
   items,
 }: {
   items: PendingValidation[];
 }) {
+  const [expanded, setExpanded] = useState(true);
   const active = items.filter((v) => v.status !== 'done');
 
   if (active.length === 0) {
@@ -478,7 +486,23 @@ function PendingValidationsList({
 
   return (
     <div className="flex flex-col gap-3">
-      {active.map((v) => (
+      <div className="flex items-center justify-between">
+        <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+          {active.length} validation{active.length > 1 ? 's' : ''} — source : <code>pending_validations.json</code>
+        </span>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs font-medium px-3 py-1 rounded-full cursor-pointer"
+          style={{
+            background: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          {expanded ? '▲ Masquer' : `▼ Voir les ${active.length} validations`}
+        </button>
+      </div>
+      {expanded && active.map((v) => (
         <div
           key={v.id}
           className="rounded-2xl px-4 py-4"
@@ -516,6 +540,7 @@ function PendingValidationsList({
             </div>
           </div>
           <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+            <span style={{ fontWeight: 500, color: 'var(--color-text-tertiary)' }}>Pourquoi : </span>
             {v.why_pending}
           </div>
           <div
@@ -528,11 +553,22 @@ function PendingValidationsList({
             <span style={{ color: 'var(--color-text-secondary)' }}>Action : </span>
             {v.expected_action}
           </div>
-          <div className="flex flex-wrap gap-2 mt-3">
-            <InfoChip label="Projet" value={v.project} />
-            <InfoChip label="Statut" value={v.status} />
-            <InfoChip label="Source" value={v.source.split('·')[0].trim()} />
-            <InfoChip label="Mis à jour" value={fmtDate(v.updated_at)} />
+          <div className="flex items-center justify-between flex-wrap gap-2 mt-3">
+            <div className="flex flex-wrap gap-2">
+              <InfoChip label="Projet" value={v.project} />
+              <InfoChip label="Source" value={v.source.split('·')[0].trim()} />
+              <InfoChip label="Mis à jour" value={fmtDate(v.updated_at)} />
+            </div>
+            <div
+              className="text-xs font-medium px-3 py-1.5 rounded-full"
+              style={{
+                background: `color-mix(in srgb, ${OWNER_COLOR[v.owner] || 'var(--color-text-secondary)'} 12%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${OWNER_COLOR[v.owner] || 'var(--color-text-secondary)'} 25%, transparent)`,
+                color: OWNER_COLOR[v.owner] || 'var(--color-text-secondary)',
+              }}
+            >
+              {OWNER_INSTRUCTION[v.owner] ?? v.owner}
+            </div>
           </div>
         </div>
       ))}
@@ -579,19 +615,48 @@ function PendingValidationCard({
         border: '1px solid color-mix(in srgb, var(--color-warning) 30%, transparent)',
       }}
     >
-      <div className="flex items-center gap-2">
-        <AlertTriangle size={16} style={{ color: 'var(--color-warning)' }} />
-        <div className="font-semibold" style={{ color: 'var(--color-text)' }}>
-          Validation vocale attendue maintenant
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={16} style={{ color: 'var(--color-warning)' }} />
+          <div className="font-semibold" style={{ color: 'var(--color-text)' }}>
+            Validation vocale Hermès
+          </div>
         </div>
+        <span
+          className="text-xs font-medium px-2 py-0.5 rounded"
+          style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 12%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}
+        >
+          [NON CONNECTÉ — affichage only]
+        </span>
       </div>
-      <div className="text-base font-medium mt-3" style={{ color: 'var(--color-text)' }}>
+      <div className="text-sm font-medium mt-3" style={{ color: 'var(--color-text)' }}>
         {action}
       </div>
-      <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
-        Jarvis attend un `oui/non` explicite avant toute exécution réelle.
+      <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+        Jarvis attend un oui/non explicite. Répondre vocalement ou brancher les boutons ci-dessous.
       </div>
-      <div className="flex flex-wrap gap-2 mt-4">
+      <div className="flex gap-2 mt-3">
+        <button
+          disabled
+          className="flex-1 py-2 rounded-xl text-sm font-medium cursor-not-allowed opacity-40"
+          style={{ background: 'color-mix(in srgb, var(--color-success) 18%, transparent)', color: 'var(--color-success)', border: '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)' }}
+          title="À brancher — validation vocale non connectée au cockpit"
+        >
+          ✓ Oui, valider
+        </button>
+        <button
+          disabled
+          className="flex-1 py-2 rounded-xl text-sm font-medium cursor-not-allowed opacity-40"
+          style={{ background: 'color-mix(in srgb, var(--color-error) 12%, transparent)', color: 'var(--color-error)', border: '1px solid color-mix(in srgb, var(--color-error) 25%, transparent)' }}
+          title="À brancher — validation vocale non connectée au cockpit"
+        >
+          ✗ Non, refuser
+        </button>
+      </div>
+      <div className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+        Boutons non connectés — à brancher sur POST /api/hermes/validate par Codex
+      </div>
+      <div className="flex flex-wrap gap-2 mt-3">
         <InfoChip label="Executable" value={executable} />
         <InfoChip label="Demandée" value={fmtDate(requestedAt)} />
       </div>
@@ -1883,7 +1948,7 @@ function ProjectsGrid({ cockpitData }: { cockpitData: PersonalCockpitSnapshot })
 
 const INBOX_STORAGE_KEY = 'ruth_ideas_inbox';
 
-type IdeaTag = 'Business' | 'ADV' | 'Jarvis' | 'TikTok' | 'Perso';
+type IdeaTag = 'Business' | 'ADV' | 'Jarvis' | 'TikTok' | 'Perso' | 'Urgent' | 'À classer';
 
 interface IdeaItem {
   id: string;
@@ -1894,7 +1959,7 @@ interface IdeaItem {
   section?: string;
 }
 
-const IDEA_TAGS: IdeaTag[] = ['Business', 'ADV', 'Jarvis', 'TikTok', 'Perso'];
+const IDEA_TAGS: IdeaTag[] = ['Urgent', 'ADV', 'Jarvis', 'Business', 'Perso', 'TikTok', 'À classer'];
 
 const IDEA_TAG_COLORS: Record<IdeaTag, { color: string; bg: string }> = {
   Business: {
@@ -1916,6 +1981,14 @@ const IDEA_TAG_COLORS: Record<IdeaTag, { color: string; bg: string }> = {
   Perso: {
     color: 'var(--color-text-secondary)',
     bg: 'color-mix(in srgb, var(--color-text-secondary) 14%, transparent)',
+  },
+  Urgent: {
+    color: 'var(--color-error)',
+    bg: 'color-mix(in srgb, var(--color-error) 14%, transparent)',
+  },
+  'À classer': {
+    color: 'var(--color-text-tertiary)',
+    bg: 'color-mix(in srgb, var(--color-text-tertiary) 12%, transparent)',
   },
 };
 
@@ -2006,7 +2079,7 @@ function IdeasInbox() {
   const visible = filterTag ? ideas.filter((i) => i.tag === filterTag) : ideas;
 
   return (
-    <Section id="ideas-inbox" title="Idées Inbox" icon={Lightbulb}>
+    <Section id="ideas-inbox" title="Inbox Obsidian / À traiter" subtitle="Idées, tâches, notes ADV, Jarvis, business, perso — tout ce qui n'est pas encore traité." icon={Lightbulb}>
       {/* Capture */}
       <div
         className="rounded-2xl p-4 mb-4"
@@ -3504,7 +3577,7 @@ export function JarvisPersonalPage() {
           <Section
             id="alerts-section"
             title="Alertes récentes"
-            subtitle="Incidents ou signaux faibles à traiter."
+            subtitle="Incidents ou signaux faibles à traiter. Actions disponibles une fois branchées."
             icon={AlertTriangle}
           >
             <div className="space-y-3">
@@ -3515,19 +3588,42 @@ export function JarvisPersonalPage() {
                   </div>
                 </div>
               )}
-              {data.alerts.map((alert, index) => (
-                <div key={`${alert.title}-${index}`} className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-bg-secondary)' }}>
-                  <div className="flex items-center gap-2">
-                    <Badge value={alert.level} />
-                    <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
-                      {alert.title}
+              {data.alerts.map((alert, index) => {
+                const isError = alert.level === 'error';
+                const accentColor = isError ? 'var(--color-error)' : alert.level === 'warning' ? 'var(--color-warning)' : 'var(--color-accent-blue)';
+                return (
+                  <div key={`${alert.title}-${index}`} className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-bg-secondary)', borderLeft: `3px solid ${accentColor}` }}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                      <div className="flex items-center gap-2">
+                        <Badge value={alert.level} />
+                        <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                          {alert.title}
+                        </div>
+                      </div>
+                      <span
+                        className="text-[10px] font-medium px-2 py-0.5 rounded"
+                        style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}
+                      >
+                        ACTION À BRANCHER
+                      </span>
+                    </div>
+                    <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                      {alert.detail}
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-error) 12%, transparent)', color: 'var(--color-error)', border: '1px solid color-mix(in srgb, var(--color-error) 20%, transparent)' }}>
+                        Corriger maintenant
+                      </button>
+                      <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-accent-blue) 12%, transparent)', color: 'var(--color-accent-blue)', border: '1px solid color-mix(in srgb, var(--color-accent-blue) 20%, transparent)' }}>
+                        Créer tâche Codex
+                      </button>
+                      <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}>
+                        Ignorer
+                      </button>
                     </div>
                   </div>
-                  <div className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
-                    {alert.detail}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Section>
         </div>
@@ -3535,10 +3631,40 @@ export function JarvisPersonalPage() {
         <div className="grid grid-cols-1 xl:grid-cols-[1.25fr_0.75fr] gap-3">
           <Section
             id="hermes-core"
-            title="Hermes Core"
-            subtitle="Le runtime Hermes maintenant branché comme source de vérité complémentaire."
+            title="Hermès Core — Moteur d'orchestration"
+            subtitle={`État technique du moteur Hermès (routing, délégation, outils, risk guard). Source : runtime JSON local. Snapshot : ${fmtDate(data.meta.generated_at)}`}
             icon={Sparkles}
           >
+            {(() => {
+              const snapshotAge = data.meta.generated_at
+                ? Math.floor((Date.now() - new Date(data.meta.generated_at).getTime()) / 1000)
+                : null;
+              const isFresh = snapshotAge !== null && snapshotAge < 300;
+              const isStale = snapshotAge !== null && snapshotAge > 600;
+              const coreEmpty = !hermes.overall || Object.keys(hermes).length < 3;
+              return (
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <span
+                    className="text-xs font-medium px-2 py-0.5 rounded"
+                    style={{
+                      background: coreEmpty ? 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)' : isFresh ? 'color-mix(in srgb, var(--color-success) 12%, transparent)' : isStale ? 'color-mix(in srgb, var(--color-warning) 12%, transparent)' : 'color-mix(in srgb, var(--color-accent-blue) 12%, transparent)',
+                      color: coreEmpty ? 'var(--color-text-tertiary)' : isFresh ? 'var(--color-success)' : isStale ? 'var(--color-warning)' : 'var(--color-accent-blue)',
+                      border: '1px solid currentColor',
+                    }}
+                  >
+                    {coreEmpty ? 'NON CONNECTÉ' : isFresh ? 'À JOUR' : isStale ? 'ANCIEN' : 'RÉCENT'}
+                  </span>
+                  {snapshotAge !== null && (
+                    <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                      Snapshot il y a {snapshotAge < 60 ? `${snapshotAge}s` : `${Math.floor(snapshotAge / 60)}min`}
+                    </span>
+                  )}
+                  <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Source : runtime/hermes/*.json · GET /v1/personal-cockpit
+                  </span>
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
               <div
                 className="rounded-2xl px-4 py-4"
