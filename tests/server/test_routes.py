@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import types
 from unittest.mock import MagicMock
 
 import pytest
@@ -11,6 +14,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from openjarvis.server.app import create_app  # noqa: E402
+from openjarvis.server import routes as server_routes  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -313,3 +317,113 @@ class TestCreateApp:
         engine = _make_engine()
         app = create_app(engine, "test-model")
         assert app.state.agent is None
+
+
+class _FakeCloudEngine:
+    def health(self):
+        return True
+
+
+class _FakeMultiEngine:
+    def __init__(self, engines):
+        self._engines = list(engines)
+        self.refreshed = False
+
+    def _refresh_map(self):
+        self.refreshed = True
+
+
+class TestCloudKeyRoutes:
+    def _install_fake_cloud_modules(self, monkeypatch):
+        fake_cloud_module = types.ModuleType("openjarvis.engine.cloud")
+        fake_cloud_module.CloudEngine = _FakeCloudEngine
+        fake_multi_module = types.ModuleType("openjarvis.engine.multi")
+        fake_multi_module.MultiEngine = _FakeMultiEngine
+        monkeypatch.setitem(sys.modules, "openjarvis.engine.cloud", fake_cloud_module)
+        monkeypatch.setitem(sys.modules, "openjarvis.engine.multi", fake_multi_module)
+
+    def test_save_cloud_keys_preserves_comments_and_reloads_engine(self, tmp_path, monkeypatch):
+        self._install_fake_cloud_modules(monkeypatch)
+        keys_path = tmp_path / "cloud-keys.env"
+        keys_path.write_text(
+            "# cloud keys\nKEEP_ME=1\nOPENAI_API_KEY=old-openai\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(server_routes, "_CLOUD_KEYS_FILE", keys_path)
+
+        engine = _make_engine()
+        app = create_app(engine, "test-model", engine_name="mock")
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/cloud/keys",
+            json={
+                "OPENAI_API_KEY": "new-openai",
+                "ANTHROPIC_API_KEY": "anthropic-secret",
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert sorted(data["saved"]) == ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+        assert "OPENAI_API_KEY" in data["configured_keys"]
+        assert "ANTHROPIC_API_KEY" in data["configured_keys"]
+        assert os.environ["OPENAI_API_KEY"] == "new-openai"
+        assert os.environ["ANTHROPIC_API_KEY"] == "anthropic-secret"
+
+        content = keys_path.read_text(encoding="utf-8")
+        assert "# cloud keys" in content
+        assert "KEEP_ME=1" in content
+        assert "OPENAI_API_KEY=new-openai" in content
+        assert "ANTHROPIC_API_KEY=anthropic-secret" in content
+        assert "old-openai" not in content
+
+    def test_save_cloud_keys_empty_string_clears_key_and_env(self, tmp_path, monkeypatch):
+        self._install_fake_cloud_modules(monkeypatch)
+        keys_path = tmp_path / "cloud-keys.env"
+        keys_path.write_text(
+            "OPENAI_API_KEY=to-remove\nGEMINI_API_KEY=keep-me\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(server_routes, "_CLOUD_KEYS_FILE", keys_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "to-remove")
+        monkeypatch.setenv("GEMINI_API_KEY", "keep-me")
+
+        engine = _make_engine()
+        app = create_app(engine, "test-model", engine_name="mock")
+        client = TestClient(app)
+
+        resp = client.post("/v1/cloud/keys", json={"OPENAI_API_KEY": ""})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "OPENAI_API_KEY" not in data["configured_keys"]
+        assert "GEMINI_API_KEY" in data["configured_keys"]
+        assert "OPENAI_API_KEY" not in os.environ
+        assert os.environ["GEMINI_API_KEY"] == "keep-me"
+
+        content = keys_path.read_text(encoding="utf-8")
+        assert "OPENAI_API_KEY" not in content
+        assert "GEMINI_API_KEY=keep-me" in content
+
+    def test_reload_cloud_route_clears_missing_allowed_keys(self, tmp_path, monkeypatch):
+        self._install_fake_cloud_modules(monkeypatch)
+        keys_path = tmp_path / "cloud-keys.env"
+        keys_path.write_text("OPENROUTER_API_KEY=router-key\n", encoding="utf-8")
+        monkeypatch.setattr(server_routes, "_CLOUD_KEYS_FILE", keys_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "stale-openai")
+
+        engine = _make_engine()
+        app = create_app(engine, "test-model", engine_name="mock")
+        client = TestClient(app)
+
+        resp = client.post("/v1/cloud/reload")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["configured_keys"] == ["OPENROUTER_API_KEY"]
+        assert "OPENAI_API_KEY" not in os.environ
+        assert os.environ["OPENROUTER_API_KEY"] == "router-key"

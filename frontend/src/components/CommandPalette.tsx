@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { Search, Cpu, X, Download, Loader2, Trash2, Check, Cloud, Key, Eye, EyeOff } from 'lucide-react';
+import { Search, Cpu, X, Download, Loader2, Trash2, Check, Cloud, ArrowRight } from 'lucide-react';
 import { useAppStore } from '../lib/store';
 import { pullModel, deleteModel, fetchModels, preloadModel, isTauri } from '../lib/api';
+import { useNavigate } from 'react-router';
 
 /** Popular models that users can download from the catalogue. */
 const CATALOGUE_MODELS = [
@@ -91,13 +92,8 @@ export function CommandPalette() {
   const [pullSuccess, setPullSuccess] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [customModel, setCustomModel] = useState('');
-  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>(() => {
-    const keys: Record<string, string> = {};
-    for (const p of CLOUD_PROVIDERS) keys[p.storageKey] = getStoredKey(p.storageKey);
-    return keys;
-  });
   const inputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
 
   const models = useAppStore((s) => s.models);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -209,25 +205,9 @@ export function CommandPalette() {
     setCustomModel('');
   };
 
-  const handleSaveKey = async (provider: CloudProvider, value: string) => {
-    setStoredKey(provider.storageKey, value);
-    setApiKeys((prev) => ({ ...prev, [provider.storageKey]: value }));
-
-    // Also save to Tauri backend so the server process picks up the key
-    if (isTauri()) {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('save_cloud_key', { keyName: provider.envKey, keyValue: value });
-      } catch {}
-    }
-
-    useAppStore.getState().addLogEntry({
-      timestamp: Date.now(), level: 'info', category: 'model',
-      message: `${provider.name} API key ${value ? 'saved' : 'removed'}. Refreshing model list…`,
-    });
-
-    // Refresh the model list so cloud models appear immediately.
-    await refreshModels();
+  const openSettingsForKeys = () => {
+    setCommandPaletteOpen(false);
+    navigate('/settings');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -285,32 +265,49 @@ export function CommandPalette() {
           ))}
         </div>
 
-        {/* Search (not for cloud tab) */}
-        {tab !== 'cloud' && (
-          <div
-            className="flex items-center gap-3 px-4 py-3"
-            style={{ borderBottom: '1px solid var(--color-border)' }}
+        {/* Search */}
+        <div
+          className="flex items-center gap-3 px-4 py-3"
+          style={{ borderBottom: '1px solid var(--color-border)' }}
+        >
+          <Search
+            size={18}
+            style={{
+              color: tab === 'cloud' ? 'var(--color-text-tertiary)' : 'var(--color-text-tertiary)',
+              opacity: tab === 'cloud' ? 0.55 : 1,
+            }}
+          />
+          <input
+            ref={inputRef}
+            type="text"
+            value={tab === 'cloud' ? '' : query}
+            onChange={(e) => {
+              if (tab === 'cloud') return;
+              setQuery(e.target.value);
+            }}
+            onKeyDown={handleKeyDown}
+            disabled={tab === 'cloud'}
+            placeholder={
+              tab === 'installed'
+                ? 'Search installed models...'
+                : tab === 'catalogue'
+                ? 'Search models to download...'
+                : 'Cloud models are configured below'
+            }
+            className="flex-1 bg-transparent outline-none text-sm disabled:cursor-default"
+            style={{
+              color: tab === 'cloud' ? 'var(--color-text-tertiary)' : 'var(--color-text)',
+              opacity: tab === 'cloud' ? 0.8 : 1,
+            }}
+          />
+          <button
+            onClick={() => setCommandPaletteOpen(false)}
+            className="p-1 rounded cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)' }}
           >
-            <Search size={18} style={{ color: 'var(--color-text-tertiary)' }} />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={tab === 'installed' ? 'Search installed models...' : 'Search models to download...'}
-              className="flex-1 bg-transparent outline-none text-sm"
-              style={{ color: 'var(--color-text)' }}
-            />
-            <button
-              onClick={() => setCommandPaletteOpen(false)}
-              className="p-1 rounded cursor-pointer"
-              style={{ color: 'var(--color-text-tertiary)' }}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        )}
+            <X size={16} />
+          </button>
+        </div>
 
         {/* Status messages */}
         {pullError && (
@@ -431,16 +428,19 @@ export function CommandPalette() {
             /* ── Cloud Models tab ── */
             <div className="px-4 py-2">
               <div className="text-[11px] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                Add your API keys to use cloud models. Keys are stored locally on your device only.
+                Modèles cloud disponibles pour Hermès et OpenJarvis. Les clés API se configurent dans Paramètres.
               </div>
 
               {CLOUD_PROVIDERS.map((provider) => {
-                const key = apiKeys[provider.storageKey] || '';
+                const key = getStoredKey(provider.storageKey);
                 const hasKey = !!key;
-                const isVisible = showKeys[provider.storageKey];
 
                 return (
-                  <div key={provider.name} className="mb-4">
+                  <div
+                    key={provider.name}
+                    className="mb-4 rounded-xl px-3 py-3"
+                    style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+                  >
                     <div className="flex items-center gap-2 mb-2">
                       <Cloud size={14} style={{ color: hasKey ? 'var(--color-success)' : 'var(--color-text-tertiary)' }} />
                       <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>{provider.name}</span>
@@ -451,39 +451,30 @@ export function CommandPalette() {
                       )}
                     </div>
 
-                    {/* API key input */}
-                    <div className="flex gap-1.5 mb-2">
-                      <div className="flex-1 flex items-center rounded-lg" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-                        <Key size={12} className="ml-2.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
-                        <input
-                          type={isVisible ? 'text' : 'password'}
-                          value={key}
-                          onChange={(e) => setApiKeys((prev) => ({ ...prev, [provider.storageKey]: e.target.value }))}
-                          onBlur={() => handleSaveKey(provider, apiKeys[provider.storageKey] || '')}
-                          placeholder={`${provider.envKey}`}
-                          className="flex-1 text-xs px-2 py-1.5 bg-transparent outline-none font-mono"
-                          style={{ color: 'var(--color-text)' }}
-                        />
+                    {!hasKey ? (
+                      <div
+                        className="rounded-lg px-3 py-2.5 text-xs flex items-center justify-between gap-3"
+                        style={{
+                          background: 'color-mix(in srgb, var(--color-warning) 8%, transparent)',
+                          border: '1px solid color-mix(in srgb, var(--color-warning) 18%, transparent)',
+                          color: 'var(--color-text)',
+                        }}
+                      >
+                        <span>
+                          {provider.name === 'OpenAI'
+                            ? 'Clé OpenAI non configurée — allez dans Paramètres > API Keys.'
+                            : `Clé ${provider.name} non configurée — allez dans Paramètres > API Keys.`}
+                        </span>
                         <button
-                          onClick={() => setShowKeys((prev) => ({ ...prev, [provider.storageKey]: !prev[provider.storageKey] }))}
-                          className="px-2 cursor-pointer" style={{ color: 'var(--color-text-tertiary)' }}
+                          onClick={openSettingsForKeys}
+                          className="inline-flex items-center gap-1 text-xs cursor-pointer"
+                          style={{ color: 'var(--color-accent)' }}
                         >
-                          {isVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                          Paramètres
+                          <ArrowRight size={11} />
                         </button>
                       </div>
-                      {hasKey && (
-                        <button
-                          onClick={() => handleSaveKey(provider, '')}
-                          className="px-2 py-1 rounded-lg text-[10px] cursor-pointer"
-                          style={{ color: 'var(--color-error)', border: '1px solid var(--color-error)' }}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Models for this provider (only show if key is set) */}
-                    {hasKey && (
+                    ) : (
                       <div className="ml-5 flex flex-col gap-1">
                         {provider.models.map((model) => {
                           const isActive = model.id === selectedModel;
@@ -518,6 +509,14 @@ export function CommandPalette() {
                   </div>
                 );
               })}
+
+              <div
+                className="mt-3 rounded-xl px-3 py-3 text-xs"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+              >
+                Pour Hermès, le réglage principal est aussi visible directement dans <span style={{ color: 'var(--color-text)' }}>Discussion avec Hermès</span> :
+                <span style={{ color: 'var(--color-text)' }}> Auto / OpenAI / Local</span>.
+              </div>
             </div>
           )}
         </div>

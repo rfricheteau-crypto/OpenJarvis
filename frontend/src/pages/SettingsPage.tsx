@@ -18,7 +18,22 @@ import {
   Brain,
 } from 'lucide-react';
 import { useAppStore, type ThemeMode } from '../lib/store';
-import { checkHealth, fetchSpeechHealth, getMemoryStats } from '../lib/api';
+import {
+  checkHealth,
+  fetchCloudKeyStatus,
+  fetchPersonalCockpit,
+  fetchSpeechHealth,
+  getMemoryStats,
+  reloadCloudKeys,
+  saveCloudKeys,
+} from '../lib/api';
+
+const STORAGE_TO_ENV: Record<string, string> = {
+  'openjarvis-openai-key': 'OPENAI_API_KEY',
+  'openjarvis-openrouter-key': 'OPENROUTER_API_KEY',
+  'openjarvis-anthropic-key': 'ANTHROPIC_API_KEY',
+  'openjarvis-gemini-key': 'GOOGLE_API_KEY',
+};
 
 function OllamaModelList() {
   const [models, setModels] = useState<Array<{ name: string; size: number }>>([]);
@@ -42,39 +57,82 @@ function OllamaModelList() {
   );
 }
 
-function ApiKeyInput({ storageKey, placeholder }: { storageKey: string; placeholder: string }) {
+function ApiKeyInput({
+  storageKey,
+  placeholder,
+  onBackendSaved,
+}: {
+  storageKey: string;
+  placeholder: string;
+  onBackendSaved?: () => Promise<void> | void;
+}) {
   const [value, setValue] = useState(() => {
     try { return localStorage.getItem(storageKey) || ''; } catch { return ''; }
   });
   const [saved, setSaved] = useState(false);
-  const save = (v: string) => {
+  const [backendState, setBackendState] = useState<'idle' | 'saving' | 'ok' | 'error'>('idle');
+  const save = async (v: string) => {
     setValue(v);
     try { if (v) localStorage.setItem(storageKey, v); else localStorage.removeItem(storageKey); } catch {}
+    const envKey = STORAGE_TO_ENV[storageKey];
+    if (envKey) {
+      try {
+        setBackendState('saving');
+        await saveCloudKeys({ [envKey]: v });
+        await reloadCloudKeys();
+        await onBackendSaved?.();
+        setBackendState('ok');
+      } catch {
+        setBackendState('error');
+      }
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
   return (
-    <div className="flex items-center gap-2">
-      <input type="password" value={value} onChange={e => save(e.target.value)} placeholder={placeholder}
+    <div className="flex items-center gap-2 flex-wrap">
+      <input type="password" value={value} onChange={e => { void save(e.target.value); }} placeholder={placeholder}
         className="w-48 px-2 py-1 rounded text-xs"
         style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />
       {saved && <span className="text-[10px]" style={{ color: 'var(--color-success)' }}>Saved</span>}
+      {backendState === 'saving' && <span className="text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>Backend…</span>}
+      {backendState === 'ok' && <span className="text-[10px]" style={{ color: 'var(--color-success)' }}>Backend OK</span>}
+      {backendState === 'error' && <span className="text-[10px]" style={{ color: 'var(--color-warning)' }}>Interface only</span>}
     </div>
   );
 }
 
-function CloudProviderStatus({ label, storageKey }: { label: string; storageKey: string }) {
-  const [hasKey, setHasKey] = useState(false);
+function CloudProviderStatus({
+  label,
+  storageKey,
+  backendConfigured = false,
+}: {
+  label: string;
+  storageKey: string;
+  backendConfigured?: boolean;
+}) {
+  const [hasUiKey, setHasUiKey] = useState(false);
   useEffect(() => {
-    try { setHasKey(!!localStorage.getItem(storageKey)); } catch { setHasKey(false); }
+    try { setHasUiKey(!!localStorage.getItem(storageKey)); } catch { setHasUiKey(false); }
   }, [storageKey]);
+  const dotColor = backendConfigured
+    ? 'var(--color-success)'
+    : hasUiKey
+    ? 'var(--color-warning)'
+    : 'var(--color-text-tertiary)';
+  const detail = backendConfigured
+    ? 'active côté backend'
+    : hasUiKey
+    ? 'clé saisie dans l’interface, mais non active côté backend'
+    : 'clé absente';
   return (
-    <span className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+    <span className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
       <span style={{
         width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-        background: hasKey ? 'var(--color-success)' : 'var(--color-text-tertiary)',
+        background: dotColor,
       }} />
-      {label}
+      <span>{label}</span>
+      <span style={{ color: 'var(--color-text-tertiary)' }}>· {detail}</span>
     </span>
   );
 }
@@ -123,6 +181,17 @@ export function SettingsPage() {
   const [saved, setSaved] = useState(false);
 
   const [memoryStats, setMemoryStats] = useState<{ entries: number; backend: string } | null>(null);
+  const [backendCloud, setBackendCloud] = useState<{
+    openai: boolean;
+    openrouter: boolean;
+    anthropic: boolean;
+    google: boolean;
+  }>({
+    openai: false,
+    openrouter: false,
+    anthropic: false,
+    google: false,
+  });
   const [memoryEnabled, setMemoryEnabled] = useState(() => {
     try { return localStorage.getItem('openjarvis-memory-enabled') !== 'false'; } catch { return true; }
   });
@@ -147,7 +216,49 @@ export function SettingsPage() {
     getMemoryStats()
       .then(setMemoryStats)
       .catch(() => setMemoryStats(null));
+    fetchCloudKeyStatus()
+      .then((payload) => {
+        setBackendCloud({
+          openai: payload.status.OPENAI_API_KEY === true,
+          openrouter: payload.status.OPENROUTER_API_KEY === true,
+          anthropic: payload.status.ANTHROPIC_API_KEY === true,
+          google: payload.status.GOOGLE_API_KEY === true || payload.status.GEMINI_API_KEY === true,
+        });
+      })
+      .catch(() => {
+        fetchPersonalCockpit()
+          .then((snapshot) => {
+            const providers = snapshot.hermes?.chat_runtime?.budget?.providers || [];
+            const findConfigured = (id: string) => providers.find((provider) => provider.id === id)?.configured === true;
+            setBackendCloud({
+              openai: findConfigured('openai'),
+              openrouter: findConfigured('openrouter'),
+              anthropic: findConfigured('anthropic'),
+              google: findConfigured('google') || findConfigured('gemini'),
+            });
+          })
+          .catch(() => {
+            setBackendCloud({
+              openai: false,
+              openrouter: false,
+              anthropic: false,
+              google: false,
+            });
+          });
+      });
   }, []);
+
+  const refreshBackendCloud = async () => {
+    try {
+      const payload = await fetchCloudKeyStatus();
+      setBackendCloud({
+        openai: payload.status.OPENAI_API_KEY === true,
+        openrouter: payload.status.OPENROUTER_API_KEY === true,
+        anthropic: payload.status.ANTHROPIC_API_KEY === true,
+        google: payload.status.GOOGLE_API_KEY === true || payload.status.GEMINI_API_KEY === true,
+      });
+    } catch {}
+  };
 
   const showSaved = () => {
     setSaved(true);
@@ -303,29 +414,39 @@ export function SettingsPage() {
             <div className="text-xs mt-2 px-1" style={{ color: 'var(--color-text-tertiary)' }}>
               Run <code className="px-1 py-0.5 rounded text-[11px]" style={{ background: 'var(--color-bg-tertiary)' }}>ollama pull &lt;model-name&gt;</code> in your terminal to add more models
             </div>
-            <SettingRow label="Cloud providers" description="Green dot means API key is configured">
+            <SettingRow label="Cloud providers" description="Le backend fiable lit ~/.openjarvis/cloud-keys.env">
               <div className="flex flex-wrap gap-3">
-                <CloudProviderStatus label="OpenAI" storageKey="openjarvis-openai-key" />
-                <CloudProviderStatus label="Anthropic" storageKey="openjarvis-anthropic-key" />
-                <CloudProviderStatus label="Google" storageKey="openjarvis-gemini-key" />
-                <CloudProviderStatus label="OpenRouter" storageKey="openjarvis-openrouter-key" />
+                <CloudProviderStatus label="OpenAI" storageKey="openjarvis-openai-key" backendConfigured={backendCloud.openai} />
+                <CloudProviderStatus label="Anthropic" storageKey="openjarvis-anthropic-key" backendConfigured={backendCloud.anthropic} />
+                <CloudProviderStatus label="Google" storageKey="openjarvis-gemini-key" backendConfigured={backendCloud.google} />
+                <CloudProviderStatus label="OpenRouter" storageKey="openjarvis-openrouter-key" backendConfigured={backendCloud.openrouter} />
               </div>
             </SettingRow>
           </Section>
 
           {/* API Keys */}
           <Section title="API Keys">
+            <div className="text-xs mb-3 px-1" style={{ color: 'var(--color-text-tertiary)' }}>
+              Les clés visibles ici doivent aussi être présentes dans
+              <code className="mx-1 px-1 py-0.5 rounded text-[11px]" style={{ background: 'var(--color-bg-tertiary)' }}>~/.openjarvis/cloud-keys.env</code>
+              pour être utilisées par le backend. Les champs ci-dessous tentent aussi d’écrire ce fichier backend maintenant.
+            </div>
+            <div className="text-xs mb-3 px-1" style={{ color: 'var(--color-text-tertiary)' }}>
+              Ajoute ensuite
+              <code className="mx-1 px-1 py-0.5 rounded text-[11px]" style={{ background: 'var(--color-bg-tertiary)' }}>OPENROUTER_API_KEY=...</code> et/ou
+              <code className="mx-1 px-1 py-0.5 rounded text-[11px]" style={{ background: 'var(--color-bg-tertiary)' }}>OPENAI_API_KEY=...</code>.
+            </div>
             <SettingRow label="OpenAI" description="GPT-4, GPT-3.5, etc.">
-              <ApiKeyInput storageKey="openjarvis-openai-key" placeholder="sk-..." />
+              <ApiKeyInput storageKey="openjarvis-openai-key" placeholder="sk-..." onBackendSaved={refreshBackendCloud} />
             </SettingRow>
             <SettingRow label="Anthropic" description="Claude models">
-              <ApiKeyInput storageKey="openjarvis-anthropic-key" placeholder="sk-ant-..." />
+              <ApiKeyInput storageKey="openjarvis-anthropic-key" placeholder="sk-ant-..." onBackendSaved={refreshBackendCloud} />
             </SettingRow>
             <SettingRow label="Google" description="Gemini models">
-              <ApiKeyInput storageKey="openjarvis-gemini-key" placeholder="AI..." />
+              <ApiKeyInput storageKey="openjarvis-gemini-key" placeholder="AI..." onBackendSaved={refreshBackendCloud} />
             </SettingRow>
             <SettingRow label="OpenRouter" description="Multi-provider routing">
-              <ApiKeyInput storageKey="openjarvis-openrouter-key" placeholder="sk-or-..." />
+              <ApiKeyInput storageKey="openjarvis-openrouter-key" placeholder="sk-or-..." onBackendSaved={refreshBackendCloud} />
             </SettingRow>
           </Section>
 

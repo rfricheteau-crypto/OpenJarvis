@@ -21,17 +21,6 @@ Jarvis is Ruth's local operational assistant: local runtime, Obsidian continuity
 - Do not run actions against `/Users/ruthpierre` globally.
 - Do not broaden a scoped operation unless Ruth explicitly asks.
 
-## n8n Safety Rules for Jarvis
-
-- Jarvis uses n8n in read-only mode by default.
-- No n8n workflow may be created, edited, activated, deactivated, or deleted without explicit user validation.
-- Jarvis may only create or modify workflows whose name starts with `JARVIS__`.
-- Any workflow without the `JARVIS__` prefix is read-only.
-- Any workflow containing the following terms is strictly forbidden for Jarvis write actions:
-  `ADV`, `WF-D`, `WF-P`, `WF-S`, `DEVIS`, `FACTURE`, `ACOMPTE`, `AVOIR`, `PAIEMENT`, `STT`, `PROSPECT`.
-- Existing active workflows must never be modified unless the user explicitly names the workflow and validates the action.
-- Secrets, API keys, tokens, and credentials must never be printed in terminal output.
-
 ## Obsidian Rules
 
 - The full Obsidian vault may be read as context.

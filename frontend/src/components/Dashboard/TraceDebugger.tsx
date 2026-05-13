@@ -59,10 +59,10 @@ function TraceCard({ trace, isActive, onClick }: { trace: TraceSummary; isActive
       onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
     >
       <div className="text-sm truncate mb-1" style={{ color: 'var(--color-text)' }}>
-        {trace.query || 'Untitled query'}
+        {trace.query || 'Requete sans titre'}
       </div>
       <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
-        <span>{trace.steps.length} steps</span>
+        <span>{trace.steps.length} etapes</span>
         <span>&middot;</span>
         <span>{totalMs.toFixed(0)}ms</span>
         <span>&middot;</span>
@@ -131,7 +131,7 @@ export function TraceDebugger() {
       setTraces(data.traces || []);
       setError(null);
     } catch {
-      setError('Cannot load traces');
+      setError('Impossible de charger les traces');
     }
   }, []);
 
@@ -146,7 +146,7 @@ export function TraceDebugger() {
       <div className="hud-panel p-6">
         <h3 className="hud-label flex items-center gap-2 mb-4">
           <GitBranch size={12} style={{ color: 'var(--color-accent)' }} />
-          Trace Debugger
+          Debogueur de traces
         </h3>
         <div className="h-48 flex items-center justify-center text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
           <span className="hud-mono">{error}</span>
@@ -159,16 +159,15 @@ export function TraceDebugger() {
     <div className="hud-panel p-6">
       <h3 className="hud-label flex items-center gap-2 mb-4">
         <GitBranch size={12} style={{ color: 'var(--color-accent)' }} />
-        Trace Debugger
+        Debogueur de traces
       </h3>
 
       {traces.length === 0 ? (
         <div className="h-48 flex items-center justify-center text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-          No traces yet. Start making queries to see them here.
+          Aucune trace pour l’instant. Lance des requetes pour les voir ici.
         </div>
       ) : (
         <div className="flex gap-4 h-80">
-          {/* Trace list */}
           <div className="w-1/3 overflow-y-auto flex flex-col gap-1 pr-2" style={{ borderRight: '1px solid var(--color-border)' }}>
             {traces.map((trace) => (
               <TraceCard
@@ -180,7 +179,6 @@ export function TraceDebugger() {
             ))}
           </div>
 
-          {/* Trace detail */}
           <div className="flex-1 overflow-y-auto">
             {selected ? (
               <div className="flex flex-col gap-2">
@@ -193,7 +191,7 @@ export function TraceDebugger() {
               </div>
             ) : (
               <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-                Select a trace to view details
+                Selectionne une trace pour voir le detail
               </div>
             )}
           </div>
