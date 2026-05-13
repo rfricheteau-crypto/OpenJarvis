@@ -31,7 +31,7 @@ import {
 import { toast } from 'sonner';
 import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot } from '../lib/api';
 import type { AdvSnapshot } from '../lib/api';
-import type { PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
+import type { ObsidianActionItem, PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
 import { HermesChatPanel } from '../components/Hermes/HermesChatPanel';
 
 function isRecord(value: unknown): value is PersonalCockpitRecord {
@@ -1944,6 +1944,109 @@ function ProjectsGrid({ cockpitData }: { cockpitData: PersonalCockpitSnapshot })
   );
 }
 
+// ─── Obsidian Action Inbox ────────────────────────────────────────────────────
+
+const ACTION_CATEGORY_COLORS: Record<string, { color: string; bg: string }> = {
+  idea: { color: 'var(--color-accent-blue)', bg: 'color-mix(in srgb, var(--color-accent-blue) 14%, transparent)' },
+  task: { color: 'var(--color-success)', bg: 'color-mix(in srgb, var(--color-success) 14%, transparent)' },
+  note: { color: 'var(--color-text-secondary)', bg: 'color-mix(in srgb, var(--color-text-secondary) 14%, transparent)' },
+  decision: { color: 'var(--color-warning)', bg: 'color-mix(in srgb, var(--color-warning) 14%, transparent)' },
+  urgency: { color: 'var(--color-error)', bg: 'color-mix(in srgb, var(--color-error) 14%, transparent)' },
+  document: { color: 'var(--color-text-tertiary)', bg: 'color-mix(in srgb, var(--color-text-tertiary) 14%, transparent)' },
+};
+
+const ACTION_PRIORITY_COLOR: Record<string, string> = {
+  urgent: 'var(--color-error)',
+  high: 'var(--color-warning)',
+  medium: 'var(--color-accent-blue)',
+  low: 'var(--color-text-tertiary)',
+};
+
+function ObsidianActionInboxList({ items }: { items: ObsidianActionItem[] }) {
+  const [expanded, setExpanded] = useState(true);
+  if (!items.length) return null;
+  return (
+    <div
+      className="rounded-2xl mb-4"
+      style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)' }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--color-text)' }}>
+            À traiter — structuré
+          </span>
+          <span
+            className="px-2 py-0.5 rounded-full text-[10px] font-medium"
+            style={{ color: 'var(--color-warning)', background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)' }}
+          >
+            V0 structurée — Obsidian réel en cours de branchement
+          </span>
+        </div>
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="text-xs cursor-pointer"
+          style={{ color: 'var(--color-text-tertiary)' }}
+        >
+          {expanded ? '▲ Masquer' : `▼ Voir les ${items.length} éléments`}
+        </button>
+      </div>
+      {/* List */}
+      {expanded && (
+        <div className="px-4 pb-4 flex flex-col gap-2">
+          {items.map((item) => {
+            const catColor = ACTION_CATEGORY_COLORS[item.category] ?? ACTION_CATEGORY_COLORS.note;
+            const prioColor = ACTION_PRIORITY_COLOR[item.priority] ?? 'var(--color-text-tertiary)';
+            return (
+              <div
+                key={item.id}
+                className="rounded-xl p-3"
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  borderLeft: `3px solid ${prioColor}`,
+                }}
+              >
+                <div className="flex items-start gap-2 flex-wrap">
+                  <span className="text-sm font-medium flex-1" style={{ color: 'var(--color-text)' }}>
+                    {item.title}
+                  </span>
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0"
+                    style={{ color: catColor.color, background: catColor.bg }}
+                  >
+                    {item.category}
+                  </span>
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[10px] font-medium shrink-0"
+                    style={{ color: prioColor, background: 'color-mix(in srgb, currentColor 12%, transparent)' }}
+                  >
+                    {item.priority}
+                  </span>
+                </div>
+                <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+                  {item.action_requested}
+                </p>
+                <div className="flex items-center gap-3 mt-2 flex-wrap">
+                  <span className="text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    {item.project}
+                  </span>
+                  <span className="text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Owner : {item.owner}
+                  </span>
+                  <span className="text-[10px] font-mono" style={{ color: 'var(--color-text-tertiary)' }}>
+                    {item.source_path}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Ideas Inbox ──────────────────────────────────────────────────────────────
 
 const INBOX_STORAGE_KEY = 'ruth_ideas_inbox';
@@ -2001,7 +2104,7 @@ function fmtIdeaDate(ts: number): string {
   return new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
 
-function IdeasInbox() {
+function IdeasInbox({ structuredItems = [] }: { structuredItems?: ObsidianActionItem[] }) {
   const [ideas, setIdeas] = useState<IdeaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState('');
@@ -2080,6 +2183,8 @@ function IdeasInbox() {
 
   return (
     <Section id="ideas-inbox" title="Inbox Obsidian / À traiter" subtitle="Idées, tâches, notes ADV, Jarvis, business, perso — tout ce qui n'est pas encore traité." icon={Lightbulb}>
+      {/* Structured action inbox */}
+      <ObsidianActionInboxList items={structuredItems} />
       {/* Capture */}
       <div
         className="rounded-2xl p-4 mb-4"
@@ -3215,7 +3320,7 @@ export function JarvisPersonalPage() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.26 }}>
-          <IdeasInbox />
+          <IdeasInbox structuredItems={(data.obsidian_action_inbox ?? []) as ObsidianActionItem[]} />
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.33 }}>

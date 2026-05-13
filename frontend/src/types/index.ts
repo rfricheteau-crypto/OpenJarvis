@@ -137,6 +137,21 @@ export interface PersonalCockpitRecord {
   [key: string]: unknown;
 }
 
+export interface ObsidianActionItem {
+  id: string;
+  title: string;
+  project: string;
+  category: 'idea' | 'task' | 'note' | 'decision' | 'urgency' | 'document';
+  priority: 'urgent' | 'high' | 'medium' | 'low';
+  status: 'pending' | 'in_progress' | 'done' | 'blocked';
+  source_type: 'obsidian' | 'manual' | 'hermes' | 'n8n';
+  source_path: string;
+  action_requested: string;
+  owner: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PersonalCockpitFileHealth {
   exists: boolean;
   path: string;
@@ -287,6 +302,8 @@ export interface PersonalCockpitSnapshot {
     updated_at: string;
   }>;
   pending_validations_count?: number;
+  obsidian_action_inbox?: ObsidianActionItem[];
+  obsidian_action_inbox_count?: number;
   last_live_brief?: PersonalCockpitRecord | null;
   yahoo_targeted_move?: PersonalCockpitRecord | null;
   yahoo_dynamic_candidate?: PersonalCockpitRecord | null;

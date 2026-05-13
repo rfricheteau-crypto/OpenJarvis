@@ -53,6 +53,7 @@ HERMES_RECENT_TRACE_JSONL_PATH = HERMES_DIR / "recent_trace.jsonl"
 HERMES_OPENAI_USAGE_LOG_PATH = HERMES_DIR / "openai_usage_log.jsonl"
 HERMES_OPENAI_BUDGET_STATE_PATH = HERMES_DIR / "openai_budget_state.json"
 HERMES_PENDING_VALIDATIONS_PATH = HERMES_DIR / "pending_validations.json"
+HERMES_OBSIDIAN_ACTION_INBOX_PATH = HERMES_DIR / "obsidian_action_inbox.json"
 OBSIDIAN_ROOT = Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "Organisation Ruth"
 OBSIDIAN_IDEAS_PATH = OBSIDIAN_ROOT / "_autres-projets" / "ideas-inbox.md"
 ADV_SNAPSHOT_PATH = PERSONAL_ROOT / "runtime" / "adv_snapshot.json"
@@ -1586,6 +1587,13 @@ def _load_pending_validations() -> list[dict[str, Any]]:
     return [v for v in items if isinstance(v, dict)]
 
 
+def _load_obsidian_action_inbox() -> list[dict[str, Any]]:
+    """Load structured Obsidian action inbox from runtime JSON."""
+    raw = _load_json(HERMES_OBSIDIAN_ACTION_INBOX_PATH) or {}
+    items = raw.get("items", [])
+    return [v for v in items if isinstance(v, dict) and v.get("status") != "done"]
+
+
 def _personal_cockpit_payload() -> dict[str, Any]:
     voice_cfg = _load_toml(VOICE_CONFIG_PATH)
     state = _load_json(STATE_PATH)
@@ -1604,6 +1612,7 @@ def _personal_cockpit_payload() -> dict[str, Any]:
     hermes_status_summary = hermes_observability.get("status_summary") or {}
     hermes_chat_runtime = _hermes_chat_runtime_summary()
     pending_validations = _load_pending_validations()
+    obsidian_action_inbox = _load_obsidian_action_inbox()
 
     connectors = [
         _connector_entry("Yahoo", _load_json(INTEGRATIONS_DIR / "yahoo" / "status.json")),
@@ -1666,6 +1675,8 @@ def _personal_cockpit_payload() -> dict[str, Any]:
         "pending_validation": (hermes.get("core_state", {}) or {}).get("pending_validation") or (state or {}).get("pending_validation"),
         "pending_validations": pending_validations,
         "pending_validations_count": len([v for v in pending_validations if v.get("status") != "done"]),
+        "obsidian_action_inbox": obsidian_action_inbox,
+        "obsidian_action_inbox_count": len(obsidian_action_inbox),
         "last_live_brief": live_brief,
         "yahoo_targeted_move": targeted_move,
         "yahoo_dynamic_candidate": dynamic_candidate,
