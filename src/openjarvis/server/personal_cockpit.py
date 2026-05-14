@@ -1245,9 +1245,14 @@ def _delegation_summary(
     ).strip()
 
     lifecycle = core_state.get("validation_lifecycle") or {}
+    last_lifecycle = core_state.get("last_validation_lifecycle") or {}
+    if not isinstance(lifecycle, dict):
+        lifecycle = {}
+    if not isinstance(last_lifecycle, dict):
+        last_lifecycle = {"lifecycle_status": str(last_lifecycle)}
     lifecycle_status = str(
         lifecycle.get("lifecycle_status")
-        or core_state.get("last_validation_lifecycle")
+        or last_lifecycle.get("lifecycle_status")
         or ""
     ).strip()
     result_status = str(
@@ -1260,6 +1265,7 @@ def _delegation_summary(
         delegation.get("result_summary")
         or delegation.get("handoff_summary")
         or lifecycle.get("result_summary")
+        or last_lifecycle.get("result_summary")
         or ""
     ).strip()
     result_logged_at = str(
@@ -1267,6 +1273,9 @@ def _delegation_summary(
         or lifecycle.get("result_logged_at")
         or lifecycle.get("executed_at")
         or lifecycle.get("last_lifecycle_update_at")
+        or last_lifecycle.get("result_logged_at")
+        or last_lifecycle.get("executed_at")
+        or last_lifecycle.get("last_lifecycle_update_at")
         or ""
     ).strip()
 
