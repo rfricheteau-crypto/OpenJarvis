@@ -10,7 +10,7 @@ from pathlib import Path
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 import httpx
 from pydantic import BaseModel, Field
 
@@ -54,6 +54,7 @@ HERMES_RECENT_TRACE_JSONL_PATH = HERMES_DIR / "recent_trace.jsonl"
 HERMES_OPENAI_USAGE_LOG_PATH = HERMES_DIR / "openai_usage_log.jsonl"
 HERMES_OPENAI_BUDGET_STATE_PATH = HERMES_DIR / "openai_budget_state.json"
 HERMES_PENDING_VALIDATIONS_PATH = HERMES_DIR / "pending_validations.json"
+HERMES_VALIDATION_STATE_PATH = HERMES_DIR / "validation_state.json"
 HERMES_OBSIDIAN_ACTION_INBOX_PATH = HERMES_DIR / "obsidian_action_inbox.json"
 OBSIDIAN_ROOT = Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "Organisation Ruth"
 OBSIDIAN_IDEAS_PATH = OBSIDIAN_ROOT / "_autres-projets" / "ideas-inbox.md"
@@ -137,6 +138,11 @@ class HermesChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class HermesValidationRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    note: str = Field(default="", max_length=2000)
+
+
 class IdeaCaptureRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     tag: str = Field(default="Business")
@@ -153,6 +159,120 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(temp_path, path)
+
+
+def _hermes_core_validation_api():
+    if str(PERSONAL_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PERSONAL_ROOT))
+    from hermes_core import approve_delegation_via_core, cancel_validation_via_core, resolve_validation_via_core
+
+    return approve_delegation_via_core, cancel_validation_via_core, resolve_validation_via_core
+
+
+def _current_hermes_validation() -> dict[str, Any]:
+    core = _load_json(HERMES_CORE_STATE_PATH) or {}
+    validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
+    voice_state = _load_json(STATE_PATH) or {}
+    pending = (
+        core.get("pending_validation")
+        or validation_state.get("active")
+        or voice_state.get("pending_validation")
+        or {}
+    )
+    return pending if isinstance(pending, dict) else {}
+
+
+def _validated_action_record(
+    *,
+    action: str,
+    execution_status: str,
+    result_summary: str = "",
+    executable: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "action": action,
+        "validated_at": datetime.now().isoformat(timespec="seconds"),
+        "execution_status": execution_status,
+    }
+    if result_summary:
+        payload["result_summary"] = result_summary
+    if executable:
+        payload["executable"] = executable
+    return payload
+
+
+def _sync_voice_validation_result(record: dict[str, Any] | None) -> None:
+    voice_state = _load_json(STATE_PATH) or {}
+    voice_state["pending_validation"] = None
+    if record is not None:
+        voice_state["last_validated_action"] = record
+    _write_json_atomic(STATE_PATH, voice_state)
+
+
+def _direct_clear_hermes_validation(
+    pending: dict[str, Any],
+    *,
+    resolution: str,
+    execution_status: str,
+    result_summary: str,
+) -> dict[str, Any]:
+    now = datetime.now().isoformat(timespec="seconds")
+    resolved = dict(pending)
+    resolved.update(
+        {
+            "status": "resolved",
+            "resolved_at": now,
+            "resolution": resolution,
+            "execution_status": execution_status,
+            "result_summary": result_summary,
+            "last_lifecycle_update_at": now,
+            "lifecycle_status": "approved" if resolution == "approved" else "rejected",
+        }
+    )
+    history = list(resolved.get("lifecycle_history") or [])
+    history.append(
+        {
+            "status": resolved["lifecycle_status"],
+            "ts": now,
+            "summary": result_summary,
+        }
+    )
+    resolved["lifecycle_history"] = history
+
+    core = _load_json(HERMES_CORE_STATE_PATH) or {}
+    core["pending_validation"] = None
+    core["last_validation_lifecycle"] = {
+        "action": str(resolved.get("action", "")),
+        "executable": resolved.get("executable"),
+        "status": "resolved",
+        "lifecycle_status": resolved["lifecycle_status"],
+        "resolution": resolution,
+        "execution_status": execution_status,
+        "approval_required": bool(resolved.get("approval_required", True)),
+        "risk_level": str(resolved.get("risk_level", "")),
+        "created_at": str(resolved.get("created_at", "")),
+        "resolved_at": now,
+        "last_lifecycle_update_at": now,
+        "history": history,
+    }
+    core["validation_lifecycle"] = None
+    core["last_recommended_action"] = str(resolved.get("action", ""))
+    core["updated_at"] = now
+    _write_json_atomic(HERMES_CORE_STATE_PATH, core)
+
+    validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
+    validation_state["active"] = None
+    validation_state["last_resolved"] = resolved
+    validation_state["updated_at"] = now
+    _write_json_atomic(HERMES_VALIDATION_STATE_PATH, validation_state)
+    return resolved
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -2309,6 +2429,118 @@ async def capture_idea(body: IdeaCaptureRequest):
     except Exception:
         logger.exception("capture_idea failed")
         return {"obsidian_path": "", "section": section, "ok": False}
+
+
+@hermes_chat_router.post("/validate")
+@router.post("/hermes/validate")
+async def hermes_validate(request_body: HermesValidationRequest):
+    """Record Ruth's cockpit validation decision without executing external actions."""
+    pending = _current_hermes_validation()
+    if not pending:
+        raise HTTPException(status_code=409, detail="Aucune validation Hermès active à traiter.")
+
+    action = str(pending.get("action") or pending.get("prompt") or "Validation Hermès").strip()
+    executable = pending.get("executable")
+    executable_value = str(executable).strip() if executable else None
+    note = request_body.note.strip()
+    core_warning = ""
+    validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
+    has_active_validation = isinstance(validation_state.get("active"), dict) and bool(validation_state.get("active"))
+
+    if request_body.decision == "approve":
+        result_summary = note or f"Validation cockpit approuvée pour : {action}"
+        execution_status = "approved_for_handoff"
+        try:
+            if not has_active_validation:
+                raise RuntimeError("validation_state.active absent")
+            approve_delegation_via_core, _, resolve_validation_via_core = _hermes_core_validation_api()
+            try:
+                approve_delegation_via_core(
+                    PERSONAL_ROOT,
+                    result_summary=result_summary,
+                )
+            except Exception as exc:  # pragma: no cover - runtime bridge can be absent.
+                core_warning = f"Approbation délégation Hermès partielle : {exc}"
+            resolved = resolve_validation_via_core(
+                PERSONAL_ROOT,
+                resolution="approved",
+                execution_status=execution_status,
+                result_summary=result_summary,
+            )
+        except Exception as exc:
+            core_warning = f"Fallback JSON utilisé pour résoudre la validation : {exc}"
+            resolved = _direct_clear_hermes_validation(
+                pending,
+                resolution="approved",
+                execution_status=execution_status,
+                result_summary=result_summary,
+            )
+
+        last_validated = _validated_action_record(
+            action=action,
+            execution_status=execution_status,
+            result_summary=result_summary,
+            executable=executable_value,
+        )
+        _sync_voice_validation_result(last_validated)
+        _append_jsonl(
+            ACTIONS_PATH,
+            {
+                "kind": "approved_delegation_handoff",
+                "action": action,
+                "execution_status": execution_status,
+                "executable": executable_value,
+                "source": "cockpit",
+            },
+        )
+        return {
+            "ok": True,
+            "decision": "approve",
+            "executed": False,
+            "execution_status": execution_status,
+            "message": "Validation enregistrée. Aucune action externe n'a été exécutée par le cockpit.",
+            "pending_validation": None,
+            "last_validated_action": last_validated,
+            "resolved_validation": resolved,
+            "warning": core_warning,
+        }
+
+    result_summary = note or f"Validation cockpit refusée pour : {action}"
+    execution_status = "cancelled"
+    try:
+        if not has_active_validation:
+            raise RuntimeError("validation_state.active absent")
+        _, cancel_validation_via_core, _ = _hermes_core_validation_api()
+        resolved = cancel_validation_via_core(PERSONAL_ROOT, result_summary=result_summary)
+    except Exception as exc:
+        core_warning = f"Fallback JSON utilisé pour annuler la validation : {exc}"
+        resolved = _direct_clear_hermes_validation(
+            pending,
+            resolution="rejected",
+            execution_status=execution_status,
+            result_summary=result_summary,
+        )
+    _sync_voice_validation_result(None)
+    _append_jsonl(
+        ACTIONS_PATH,
+        {
+            "kind": "cancelled_validation",
+            "action": action,
+            "execution_status": execution_status,
+            "executable": executable_value,
+            "source": "cockpit",
+        },
+    )
+    return {
+        "ok": True,
+        "decision": "reject",
+        "executed": False,
+        "execution_status": execution_status,
+        "message": "Validation refusée. Aucune action externe n'a été exécutée.",
+        "pending_validation": None,
+        "resolved_validation": resolved,
+        "warning": core_warning,
+    }
 
 
 @hermes_chat_router.post("/chat")

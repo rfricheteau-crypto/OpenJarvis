@@ -29,8 +29,8 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot } from '../lib/api';
-import type { AdvSnapshot } from '../lib/api';
+import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot, submitHermesValidation } from '../lib/api';
+import type { AdvSnapshot, HermesValidationDecision } from '../lib/api';
 import type { ObsidianActionInboxSource, ObsidianActionItem, PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
 import { HermesChatPanel } from '../components/Hermes/HermesChatPanel';
 
@@ -578,9 +578,12 @@ function PendingValidationsList({
 
 function PendingValidationCard({
   pending,
+  onValidate,
 }: {
   pending?: PersonalCockpitRecord | null;
+  onValidate: (decision: HermesValidationDecision) => Promise<void>;
 }) {
+  const [submitting, setSubmitting] = useState<HermesValidationDecision | null>(null);
   if (!pending) {
     return (
       <div
@@ -606,6 +609,17 @@ function PendingValidationCard({
   const action = String(pending.action || 'Action réelle en attente');
   const executable = String(pending.executable || 'n/a');
   const requestedAt = String(pending.requested_at || '');
+  const busy = submitting !== null;
+
+  const handleDecision = async (decision: HermesValidationDecision) => {
+    if (busy) return;
+    setSubmitting(decision);
+    try {
+      await onValidate(decision);
+    } finally {
+      setSubmitting(null);
+    }
+  };
 
   return (
     <div
@@ -624,37 +638,39 @@ function PendingValidationCard({
         </div>
         <span
           className="text-xs font-medium px-2 py-0.5 rounded"
-          style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 12%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}
+          style={{ background: 'color-mix(in srgb, var(--color-success) 12%, transparent)', color: 'var(--color-success)', border: '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)' }}
         >
-          [NON CONNECTÉ — affichage only]
+          [CONNECTÉ — validation cockpit]
         </span>
       </div>
       <div className="text-sm font-medium mt-3" style={{ color: 'var(--color-text)' }}>
         {action}
       </div>
       <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-        Jarvis attend un oui/non explicite. Répondre vocalement ou brancher les boutons ci-dessous.
+        Jarvis attend un oui/non explicite. Le cockpit enregistre la décision dans Hermès, sans exécuter d'action externe directement.
       </div>
       <div className="flex gap-2 mt-3">
         <button
-          disabled
-          className="flex-1 py-2 rounded-xl text-sm font-medium cursor-not-allowed opacity-40"
+          disabled={busy}
+          onClick={() => void handleDecision('approve')}
+          className="flex-1 py-2 rounded-xl text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
           style={{ background: 'color-mix(in srgb, var(--color-success) 18%, transparent)', color: 'var(--color-success)', border: '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)' }}
-          title="À brancher — validation vocale non connectée au cockpit"
+          title="Enregistre une approbation Hermès, sans exécution externe directe"
         >
-          ✓ Oui, valider
+          {submitting === 'approve' ? 'Validation...' : '✓ Oui, valider'}
         </button>
         <button
-          disabled
-          className="flex-1 py-2 rounded-xl text-sm font-medium cursor-not-allowed opacity-40"
+          disabled={busy}
+          onClick={() => void handleDecision('reject')}
+          className="flex-1 py-2 rounded-xl text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
           style={{ background: 'color-mix(in srgb, var(--color-error) 12%, transparent)', color: 'var(--color-error)', border: '1px solid color-mix(in srgb, var(--color-error) 25%, transparent)' }}
-          title="À brancher — validation vocale non connectée au cockpit"
+          title="Refuse la validation Hermès, sans exécution externe"
         >
-          ✗ Non, refuser
+          {submitting === 'reject' ? 'Refus...' : '✗ Non, refuser'}
         </button>
       </div>
       <div className="text-xs mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
-        Boutons non connectés — à brancher sur POST /api/hermes/validate par Codex
+        POST /api/hermes/validate · exécution externe désactivée dans ce bouton.
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
         <InfoChip label="Executable" value={executable} />
@@ -2956,6 +2972,24 @@ export function JarvisPersonalPage() {
     }
   }, []);
 
+  const handleHermesValidation = useCallback(async (decision: HermesValidationDecision) => {
+    try {
+      const result = await submitHermesValidation(decision);
+      if (decision === 'approve') {
+        toast.success(result.message || 'Validation Hermès enregistrée');
+      } else {
+        toast.info(result.message || 'Validation Hermès refusée');
+      }
+      if (result.warning) {
+        toast.warning(result.warning);
+      }
+      await refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Validation Hermès impossible');
+      throw err;
+    }
+  }, [refresh]);
+
   useEffect(() => {
     refresh();
     let timer: number | null = null;
@@ -3716,7 +3750,7 @@ export function JarvisPersonalPage() {
               <div className="text-xs uppercase tracking-[0.14em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
                 Validation vocale Hermès (runtime)
               </div>
-              <PendingValidationCard pending={data.pending_validation} />
+              <PendingValidationCard pending={data.pending_validation} onValidate={handleHermesValidation} />
             </div>
           )}
         </Section>

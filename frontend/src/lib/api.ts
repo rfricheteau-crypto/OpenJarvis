@@ -235,6 +235,30 @@ export async function fetchPersonalCockpit(): Promise<PersonalCockpitSnapshot> {
   return res.json();
 }
 
+export type HermesValidationDecision = 'approve' | 'reject';
+
+export interface HermesValidationResponse {
+  ok: boolean;
+  decision: HermesValidationDecision;
+  executed: boolean;
+  execution_status: string;
+  message: string;
+  warning?: string;
+}
+
+export async function submitHermesValidation(
+  decision: HermesValidationDecision,
+  note: string = '',
+): Promise<HermesValidationResponse> {
+  const res = await fetch(`${getBase()}/api/hermes/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, note }),
+  });
+  if (!res.ok) throw new Error(`Failed to submit Hermès validation: ${res.status}`);
+  return res.json();
+}
+
 export interface ObsidianIdeaItem {
   id: string;
   text: string;
