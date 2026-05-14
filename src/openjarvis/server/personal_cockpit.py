@@ -1,5 +1,6 @@
 """Personal Jarvis cockpit routes backed by jarvis-personal runtime files."""
 
+import hashlib
 import json
 import os
 import re
@@ -56,6 +57,17 @@ HERMES_PENDING_VALIDATIONS_PATH = HERMES_DIR / "pending_validations.json"
 HERMES_OBSIDIAN_ACTION_INBOX_PATH = HERMES_DIR / "obsidian_action_inbox.json"
 OBSIDIAN_ROOT = Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "Organisation Ruth"
 OBSIDIAN_IDEAS_PATH = OBSIDIAN_ROOT / "_autres-projets" / "ideas-inbox.md"
+OBSIDIAN_MANIFEST_PATH = OBSIDIAN_ROOT / "00-MANIFEST.md"
+OBSIDIAN_URGENCES_PATH = OBSIDIAN_ROOT / "00-URGENCES.md"
+OBSIDIAN_JARVIS_STATE_PATH = OBSIDIAN_ROOT / "JARVIS" / "_etat-actuel.md"
+OBSIDIAN_ADV_INBOX_PATH = OBSIDIAN_ROOT / "ADV" / "Idées" / "_inbox.md"
+OBSIDIAN_ACTION_SOURCE_PATHS: tuple[tuple[str, Path, str], ...] = (
+    ("Urgences", OBSIDIAN_URGENCES_PATH, "Global"),
+    ("Manifeste", OBSIDIAN_MANIFEST_PATH, "Global"),
+    ("ADV inbox", OBSIDIAN_ADV_INBOX_PATH, "ADV"),
+    ("Jarvis état actuel", OBSIDIAN_JARVIS_STATE_PATH, "Jarvis"),
+    ("Autres projets inbox", OBSIDIAN_IDEAS_PATH, "Autres projets"),
+)
 ADV_SNAPSHOT_PATH = PERSONAL_ROOT / "runtime" / "adv_snapshot.json"
 ADV_SNAPSHOT_TTL = 300
 
@@ -1587,11 +1599,300 @@ def _load_pending_validations() -> list[dict[str, Any]]:
     return [v for v in items if isinstance(v, dict)]
 
 
-def _load_obsidian_action_inbox() -> list[dict[str, Any]]:
-    """Load structured Obsidian action inbox from runtime JSON."""
+def _obsidian_relative_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(OBSIDIAN_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _clean_markdown_inline(value: str) -> str:
+    text = value.strip()
+    text = re.sub(r"<!--.*?-->", "", text)
+    text = re.sub(r"\[\[([^|\]]+)\|([^\]]+)\]\]", r"\2", text)
+    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"[_*#]+", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _stable_obsidian_item_id(source_path: str, index: int, title: str) -> str:
+    digest = hashlib.sha1(f"{source_path}:{index}:{title}".encode("utf-8")).hexdigest()[:10]
+    return f"obsidian-{digest}"
+
+
+def _infer_project(text: str, default_project: str) -> str:
+    lowered = text.lower()
+    checks = (
+        ("ADV", ("adv", "allo devis", "devis", "facture", "stripe", "brevo", "firestore")),
+        ("Jarvis", ("jarvis", "hermès", "hermes", "ruth os", "openjarvis")),
+        ("Graphify", ("graphify",)),
+        ("Obsidian", ("obsidian", "vault")),
+        ("Valéna", ("valéna", "valena")),
+        ("Codex Ruth OS", ("codex", "agent_handoff", "claude")),
+        ("PERSO", ("perso",)),
+        ("Remotion", ("remotion",)),
+        ("Universe.io", ("universe.io",)),
+    )
+    for project, keywords in checks:
+        if any(keyword in lowered for keyword in keywords):
+            return project
+    return default_project
+
+
+def _infer_category(text: str, section: str = "") -> str:
+    lowered = f"{section} {text}".lower()
+    if any(token in lowered for token in ("urgence", "urgent", "p1", "p2", "p3", "bloqué", "bloque")):
+        return "urgency"
+    if any(token in lowered for token in ("décider", "decision", "décision", "arbitrer")):
+        return "decision"
+    if any(token in lowered for token in ("idée", "idee", "projet en veille")):
+        return "idea"
+    if any(token in lowered for token in ("document", "note", "handoff", "manifest")):
+        return "note"
+    return "task"
+
+
+def _infer_priority(text: str, section: str = "") -> str:
+    lowered = f"{section} {text}".lower()
+    if "non urgent" in lowered or "radar" in lowered:
+        return "low"
+    if any(token in lowered for token in ("🟠", "p3", "bientôt", "bientot", "medium", "moyen")):
+        return "medium"
+    if any(token in lowered for token in ("p2", "high", "haute", "important", "bloqué", "bloque")):
+        return "high"
+    if any(token in lowered for token in ("🔴", "p1", "critique")):
+        return "urgent"
+    if "urgent" in lowered:
+        return "urgent"
+    return "low"
+
+
+def _infer_owner(text: str) -> str:
+    lowered = text.lower()
+    if "codex" in lowered:
+        return "Codex"
+    if "claude" in lowered:
+        return "Claude"
+    if "hermès" in lowered or "hermes" in lowered:
+        return "Hermès"
+    if "ruth" in lowered or "device" in lowered or "console" in lowered or "dashboard" in lowered:
+        return "Ruth"
+    return "Hermès"
+
+
+def _is_actionable_section(section: str) -> bool:
+    lowered = section.lower()
+    return any(
+        token in lowered
+        for token in (
+            "urgence",
+            "actif maintenant",
+            "à traiter",
+            "a traiter",
+            "en attente",
+            "prochaine action",
+            "prochain bloc",
+            "projets en veille",
+            "idées",
+            "idees",
+            "inbox",
+        )
+    )
+
+
+def _item_from_obsidian_text(
+    *,
+    title: str,
+    project: str,
+    source_path: str,
+    updated_at: str,
+    index: int,
+    action_requested: str = "",
+    section: str = "",
+) -> dict[str, Any] | None:
+    clean_title = _clean_markdown_inline(title)
+    if not clean_title or clean_title in {"-", "[ ]"}:
+        return None
+    action = _clean_markdown_inline(action_requested) or "Lire la note source et décider du prochain geste concret."
+    context = f"{clean_title} {action} {project}"
+    inferred_project = _infer_project(context, project)
+    return {
+        "id": _stable_obsidian_item_id(source_path, index, clean_title),
+        "title": clean_title[:180],
+        "project": inferred_project,
+        "category": _infer_category(context, section),
+        "priority": _infer_priority(context, section),
+        "status": "pending",
+        "source_type": "obsidian",
+        "source_path": source_path,
+        "action_requested": action[:240],
+        "owner": _infer_owner(context),
+        "created_at": updated_at,
+        "updated_at": updated_at,
+    }
+
+
+def _parse_markdown_table_row(line: str) -> list[str]:
+    return [_clean_markdown_inline(cell) for cell in line.strip().strip("|").split("|")]
+
+
+def _extract_obsidian_action_items(path: Path, default_project: str) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    content = path.read_text(encoding="utf-8")
+    source_path = _obsidian_relative_path(path)
+    updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+    items: list[dict[str, Any]] = []
+    current_section = ""
+    table_headers: list[str] = []
+
+    for raw_index, raw_line in enumerate(content.splitlines()):
+        line = raw_line.strip()
+        if not line or line == "---" or line.startswith(">") or line.startswith("<!--"):
+            continue
+        heading = re.match(r"^(#{1,4})\s+(.+)$", line)
+        if heading:
+            current_section = _clean_markdown_inline(heading.group(2))
+            table_headers = []
+            continue
+        if line.startswith("|") and line.endswith("|"):
+            cells = _parse_markdown_table_row(line)
+            if cells and all(re.fullmatch(r":?-{2,}:?", cell.replace(" ", "")) for cell in cells):
+                continue
+            lowered_cells = [cell.lower() for cell in cells]
+            if any(cell in {"projet", "sujet", "prochaine action", "priorité", "priorite", "idée de base"} for cell in lowered_cells):
+                table_headers = lowered_cells
+                continue
+            if table_headers:
+                row = dict(zip(table_headers, cells))
+                project = row.get("projet") or default_project
+                subject = row.get("sujet") or row.get("idée de base") or row.get("idee de base") or row.get("projet") or ""
+                action = row.get("prochaine action") or row.get("bloqué par") or row.get("bloque par") or row.get("source") or ""
+                priority = row.get("priorité") or row.get("priorite") or current_section
+                item = _item_from_obsidian_text(
+                    title=subject,
+                    project=project,
+                    source_path=source_path,
+                    updated_at=updated_at,
+                    index=raw_index,
+                    action_requested=action,
+                    section=f"{current_section} {priority}",
+                )
+                if item:
+                    items.append(item)
+            continue
+
+        checkbox = re.match(r"^[-*]\s+\[ \]\s+(.+)$", line)
+        if checkbox:
+            item = _item_from_obsidian_text(
+                title=checkbox.group(1),
+                project=default_project,
+                source_path=source_path,
+                updated_at=updated_at,
+                index=raw_index,
+                section=current_section,
+            )
+            if item:
+                items.append(item)
+            continue
+
+        bullet = re.match(r"^[-*]\s+(.+)$", line)
+        if bullet and _is_actionable_section(current_section):
+            text = bullet.group(1)
+            item = _item_from_obsidian_text(
+                title=text,
+                project=default_project,
+                source_path=source_path,
+                updated_at=updated_at,
+                index=raw_index,
+                section=current_section,
+            )
+            if item:
+                items.append(item)
+            continue
+
+        if "Prochain bloc critique" in line or "Prochaine action" in line:
+            label, _, value = line.partition(":")
+            item = _item_from_obsidian_text(
+                title=value or line,
+                project=default_project,
+                source_path=source_path,
+                updated_at=updated_at,
+                index=raw_index,
+                action_requested=label,
+                section=current_section,
+            )
+            if item:
+                items.append(item)
+
+    return items
+
+
+def _load_obsidian_action_inbox_fallback() -> dict[str, Any]:
     raw = _load_json(HERMES_OBSIDIAN_ACTION_INBOX_PATH) or {}
     items = raw.get("items", [])
-    return [v for v in items if isinstance(v, dict) and v.get("status") != "done"]
+    active_items = [v for v in items if isinstance(v, dict) and v.get("status") != "done"]
+    if active_items:
+        return {
+            "items": active_items,
+            "source": {
+                "mode": "fallback_json",
+                "label": "Fallback JSON",
+                "detail": str(raw.get("source") or HERMES_OBSIDIAN_ACTION_INBOX_PATH),
+                "updated_at": str(raw.get("updated_at") or ""),
+                "sources": [{"path": str(HERMES_OBSIDIAN_ACTION_INBOX_PATH), "exists": HERMES_OBSIDIAN_ACTION_INBOX_PATH.exists()}],
+            },
+        }
+    return {
+        "items": [],
+        "source": {
+            "mode": "mock",
+            "label": "Mock",
+            "detail": "Aucune source Obsidian réelle ni fallback JSON exploitable.",
+            "updated_at": "",
+            "sources": [{"path": str(HERMES_OBSIDIAN_ACTION_INBOX_PATH), "exists": HERMES_OBSIDIAN_ACTION_INBOX_PATH.exists()}],
+        },
+    }
+
+
+def _load_obsidian_action_inbox() -> dict[str, Any]:
+    """Read a targeted Obsidian action inbox, with JSON fallback if unavailable."""
+    try:
+        items: list[dict[str, Any]] = []
+        sources: list[dict[str, Any]] = []
+        for label, path, default_project in OBSIDIAN_ACTION_SOURCE_PATHS:
+            exists = path.exists()
+            sources.append({"label": label, "path": _obsidian_relative_path(path), "exists": exists})
+            if exists:
+                items.extend(_extract_obsidian_action_items(path, default_project))
+        unique_items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        priority_rank = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+        for item in sorted(items, key=lambda row: (priority_rank.get(str(row.get("priority")), 9), str(row.get("updated_at", ""))), reverse=False):
+            key = f"{item.get('title')}::{item.get('source_path')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_items.append(item)
+        if unique_items:
+            return {
+                "items": unique_items[:40],
+                "source": {
+                    "mode": "real",
+                    "label": "Obsidian réel",
+                    "detail": "Lecture ciblée de 00-URGENCES, 00-MANIFEST, ADV/Idées, JARVIS/_etat-actuel et _autres-projets.",
+                    "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "sources": sources,
+                },
+            }
+    except Exception as exc:
+        logger.exception("targeted Obsidian action inbox failed")
+        fallback = _load_obsidian_action_inbox_fallback()
+        fallback["source"]["error"] = str(exc)
+        return fallback
+    return _load_obsidian_action_inbox_fallback()
 
 
 def _personal_cockpit_payload() -> dict[str, Any]:
@@ -1612,7 +1913,9 @@ def _personal_cockpit_payload() -> dict[str, Any]:
     hermes_status_summary = hermes_observability.get("status_summary") or {}
     hermes_chat_runtime = _hermes_chat_runtime_summary()
     pending_validations = _load_pending_validations()
-    obsidian_action_inbox = _load_obsidian_action_inbox()
+    obsidian_action_inbox_payload = _load_obsidian_action_inbox()
+    obsidian_action_inbox = obsidian_action_inbox_payload.get("items", [])
+    obsidian_action_inbox_source = obsidian_action_inbox_payload.get("source", {})
 
     connectors = [
         _connector_entry("Yahoo", _load_json(INTEGRATIONS_DIR / "yahoo" / "status.json")),
@@ -1677,6 +1980,7 @@ def _personal_cockpit_payload() -> dict[str, Any]:
         "pending_validations_count": len([v for v in pending_validations if v.get("status") != "done"]),
         "obsidian_action_inbox": obsidian_action_inbox,
         "obsidian_action_inbox_count": len(obsidian_action_inbox),
+        "obsidian_action_inbox_source": obsidian_action_inbox_source,
         "last_live_brief": live_brief,
         "yahoo_targeted_move": targeted_move,
         "yahoo_dynamic_candidate": dynamic_candidate,

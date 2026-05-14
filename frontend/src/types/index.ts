@@ -152,6 +152,19 @@ export interface ObsidianActionItem {
   updated_at: string;
 }
 
+export interface ObsidianActionInboxSource {
+  mode: 'real' | 'fallback_json' | 'mock';
+  label: string;
+  detail?: string;
+  updated_at?: string;
+  error?: string;
+  sources?: Array<{
+    label?: string;
+    path: string;
+    exists: boolean;
+  }>;
+}
+
 export interface PersonalCockpitFileHealth {
   exists: boolean;
   path: string;
@@ -304,6 +317,7 @@ export interface PersonalCockpitSnapshot {
   pending_validations_count?: number;
   obsidian_action_inbox?: ObsidianActionItem[];
   obsidian_action_inbox_count?: number;
+  obsidian_action_inbox_source?: ObsidianActionInboxSource;
   last_live_brief?: PersonalCockpitRecord | null;
   yahoo_targeted_move?: PersonalCockpitRecord | null;
   yahoo_dynamic_candidate?: PersonalCockpitRecord | null;

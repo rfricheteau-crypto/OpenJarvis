@@ -31,7 +31,7 @@ import {
 import { toast } from 'sonner';
 import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot } from '../lib/api';
 import type { AdvSnapshot } from '../lib/api';
-import type { ObsidianActionItem, PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
+import type { ObsidianActionInboxSource, ObsidianActionItem, PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
 import { HermesChatPanel } from '../components/Hermes/HermesChatPanel';
 
 function isRecord(value: unknown): value is PersonalCockpitRecord {
@@ -1962,9 +1962,21 @@ const ACTION_PRIORITY_COLOR: Record<string, string> = {
   low: 'var(--color-text-tertiary)',
 };
 
-function ObsidianActionInboxList({ items }: { items: ObsidianActionItem[] }) {
+function ObsidianActionInboxList({
+  items,
+  source,
+}: {
+  items: ObsidianActionItem[];
+  source?: ObsidianActionInboxSource;
+}) {
   const [expanded, setExpanded] = useState(true);
-  if (!items.length) return null;
+  const mode = source?.mode || 'mock';
+  const sourceBadge =
+    mode === 'real'
+      ? { label: 'Obsidian réel', color: 'var(--color-success)' }
+      : mode === 'fallback_json'
+      ? { label: 'Fallback JSON', color: 'var(--color-warning)' }
+      : { label: 'Mock', color: 'var(--color-text-tertiary)' };
   return (
     <div
       className="rounded-2xl mb-4"
@@ -1978,21 +1990,32 @@ function ObsidianActionInboxList({ items }: { items: ObsidianActionItem[] }) {
           </span>
           <span
             className="px-2 py-0.5 rounded-full text-[10px] font-medium"
-            style={{ color: 'var(--color-warning)', background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)' }}
+            style={{ color: sourceBadge.color, background: `color-mix(in srgb, ${sourceBadge.color} 14%, transparent)` }}
           >
-            V0 structurée — Obsidian réel en cours de branchement
+            {sourceBadge.label}
           </span>
         </div>
-        <button
-          onClick={() => setExpanded((e) => !e)}
-          className="text-xs cursor-pointer"
-          style={{ color: 'var(--color-text-tertiary)' }}
-        >
-          {expanded ? '▲ Masquer' : `▼ Voir les ${items.length} éléments`}
-        </button>
+        {items.length > 0 && (
+          <button
+            onClick={() => setExpanded((e) => !e)}
+            className="text-xs cursor-pointer"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            {expanded ? '▲ Masquer' : `▼ Voir les ${items.length} éléments`}
+          </button>
+        )}
       </div>
+      {source?.detail && (
+        <div className="px-4 pb-3 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+          {source.detail}
+        </div>
+      )}
       {/* List */}
-      {expanded && (
+      {items.length === 0 ? (
+        <div className="px-4 pb-4 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          Aucun élément structuré à traiter dans la source active.
+        </div>
+      ) : expanded && (
         <div className="px-4 pb-4 flex flex-col gap-2">
           {items.map((item) => {
             const catColor = ACTION_CATEGORY_COLORS[item.category] ?? ACTION_CATEGORY_COLORS.note;
@@ -2036,6 +2059,9 @@ function ObsidianActionInboxList({ items }: { items: ObsidianActionItem[] }) {
                   </span>
                   <span className="text-[10px] font-mono" style={{ color: 'var(--color-text-tertiary)' }}>
                     {item.source_path}
+                  </span>
+                  <span className="text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                    {fmtDate(item.updated_at)}
                   </span>
                 </div>
               </div>
@@ -2104,7 +2130,13 @@ function fmtIdeaDate(ts: number): string {
   return new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
 
-function IdeasInbox({ structuredItems = [] }: { structuredItems?: ObsidianActionItem[] }) {
+function IdeasInbox({
+  structuredItems = [],
+  structuredSource,
+}: {
+  structuredItems?: ObsidianActionItem[];
+  structuredSource?: ObsidianActionInboxSource;
+}) {
   const [ideas, setIdeas] = useState<IdeaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState('');
@@ -2184,7 +2216,7 @@ function IdeasInbox({ structuredItems = [] }: { structuredItems?: ObsidianAction
   return (
     <Section id="ideas-inbox" title="Inbox Obsidian / À traiter" subtitle="Idées, tâches, notes ADV, Jarvis, business, perso — tout ce qui n'est pas encore traité." icon={Lightbulb}>
       {/* Structured action inbox */}
-      <ObsidianActionInboxList items={structuredItems} />
+      <ObsidianActionInboxList items={structuredItems} source={structuredSource} />
       {/* Capture */}
       <div
         className="rounded-2xl p-4 mb-4"
@@ -2388,41 +2420,63 @@ function AlertRow({
   level,
   title,
   detail,
-  onDismiss,
 }: {
   level: AlertLevel;
   title: string;
   detail: string;
-  onDismiss: () => void;
+  onDismiss?: () => void;
 }) {
   const cfg = ALERT_LEVEL_CONFIG[level];
   return (
     <div
-      className="flex items-start gap-3 rounded-xl px-4 py-3"
+      className="rounded-xl px-4 py-3"
       style={{ background: cfg.bg, border: `1px solid ${cfg.border}` }}
     >
-      <span
-        className="mt-1 shrink-0 inline-block rounded-full h-2 w-2"
-        style={{ background: cfg.dot }}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium" style={{ color: cfg.color }}>
-          {title}
-        </div>
-        {detail && (
-          <div className="text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
-            {detail}
+      <div className="flex items-start gap-3">
+        <span
+          className="mt-1 shrink-0 inline-block rounded-full h-2 w-2"
+          style={{ background: cfg.dot }}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-medium" style={{ color: cfg.color }}>
+              {title}
+            </div>
+            <span
+              className="shrink-0 text-[10px] font-medium px-2 py-0.5 rounded"
+              style={{
+                background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
+                color: 'var(--color-text-tertiary)',
+                border: '1px solid var(--color-border)',
+              }}
+            >
+              [ACTION NON CONNECTÉE]
+            </span>
           </div>
-        )}
+          {detail && (
+            <div className="text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
+              {detail}
+            </div>
+          )}
+        </div>
       </div>
-      <button
-        onClick={onDismiss}
-        className="shrink-0 mt-0.5 p-1 rounded cursor-pointer transition-opacity hover:opacity-70"
-        style={{ color: 'var(--color-text-tertiary)' }}
-        title={"Marquer comme traité"}
-      >
-        <CheckCircle2 size={15} />
-      </button>
+      <div className="flex flex-wrap gap-2 mt-3 pl-5">
+        {['Corriger', 'Créer tâche', 'Ignorer'].map((label) => (
+          <button
+            key={label}
+            disabled
+            className="text-xs px-3 py-1 rounded-full opacity-45 cursor-not-allowed"
+            style={{
+              background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
+              color: 'var(--color-text-tertiary)',
+              border: '1px solid var(--color-border)',
+            }}
+            title="Backend d'action alerte absent"
+          >
+            {label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -3320,7 +3374,10 @@ export function JarvisPersonalPage() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.26 }}>
-          <IdeasInbox structuredItems={(data.obsidian_action_inbox ?? []) as ObsidianActionItem[]} />
+          <IdeasInbox
+            structuredItems={(data.obsidian_action_inbox ?? []) as ObsidianActionItem[]}
+            structuredSource={data.obsidian_action_inbox_source}
+          />
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.33 }}>
@@ -3709,7 +3766,7 @@ export function JarvisPersonalPage() {
                         className="text-[10px] font-medium px-2 py-0.5 rounded"
                         style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}
                       >
-                        ACTION À BRANCHER
+                        [ACTION NON CONNECTÉE]
                       </span>
                     </div>
                     <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -3717,10 +3774,10 @@ export function JarvisPersonalPage() {
                     </div>
                     <div className="flex flex-wrap gap-2 mt-3">
                       <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-error) 12%, transparent)', color: 'var(--color-error)', border: '1px solid color-mix(in srgb, var(--color-error) 20%, transparent)' }}>
-                        Corriger maintenant
+                        Corriger
                       </button>
                       <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-accent-blue) 12%, transparent)', color: 'var(--color-accent-blue)', border: '1px solid color-mix(in srgb, var(--color-accent-blue) 20%, transparent)' }}>
-                        Créer tâche Codex
+                        Créer tâche
                       </button>
                       <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}>
                         Ignorer
