@@ -29,8 +29,8 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot, submitHermesValidation } from '../lib/api';
-import type { AdvSnapshot, HermesValidationDecision } from '../lib/api';
+import { fetchPersonalCockpit, fetchIdeas, createIdea, toggleIdea, fetchAdvSnapshot, submitHermesAlertAction, submitHermesValidation } from '../lib/api';
+import type { AdvSnapshot, HermesAlertAction, HermesValidationDecision } from '../lib/api';
 import type { ObsidianActionInboxSource, ObsidianActionItem, PersonalCockpitFileHealth, PersonalCockpitRecord, PersonalCockpitSnapshot } from '../types';
 import { HermesChatPanel } from '../components/Hermes/HermesChatPanel';
 
@@ -2436,13 +2436,32 @@ function AlertRow({
   level,
   title,
   detail,
+  onAction,
+  onDismiss,
 }: {
   level: AlertLevel;
   title: string;
   detail: string;
+  onAction?: (action: HermesAlertAction) => Promise<void>;
   onDismiss?: () => void;
 }) {
+  const [submitting, setSubmitting] = useState<HermesAlertAction | null>(null);
   const cfg = ALERT_LEVEL_CONFIG[level];
+  const connected = typeof onAction === 'function';
+
+  const triggerAction = async (action: HermesAlertAction) => {
+    if (!onAction || submitting) return;
+    setSubmitting(action);
+    try {
+      await onAction(action);
+      if (action === 'ignore') {
+        onDismiss?.();
+      }
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
   return (
     <div
       className="rounded-xl px-4 py-3"
@@ -2461,12 +2480,16 @@ function AlertRow({
             <span
               className="shrink-0 text-[10px] font-medium px-2 py-0.5 rounded"
               style={{
-                background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
-                color: 'var(--color-text-tertiary)',
-                border: '1px solid var(--color-border)',
+                background: connected
+                  ? 'color-mix(in srgb, var(--color-success) 12%, transparent)'
+                  : 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
+                color: connected ? 'var(--color-success)' : 'var(--color-text-tertiary)',
+                border: connected
+                  ? '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)'
+                  : '1px solid var(--color-border)',
               }}
             >
-              [ACTION NON CONNECTÉE]
+              {connected ? '[ACTION CONNECTÉE]' : '[ACTION NON CONNECTÉE]'}
             </span>
           </div>
           {detail && (
@@ -2477,19 +2500,24 @@ function AlertRow({
         </div>
       </div>
       <div className="flex flex-wrap gap-2 mt-3 pl-5">
-        {['Corriger', 'Créer tâche', 'Ignorer'].map((label) => (
+        {[
+          { label: 'Corriger', value: 'fix' as HermesAlertAction },
+          { label: 'Créer tâche', value: 'create_task' as HermesAlertAction },
+          { label: 'Ignorer', value: 'ignore' as HermesAlertAction },
+        ].map((entry) => (
           <button
-            key={label}
-            disabled
-            className="text-xs px-3 py-1 rounded-full opacity-45 cursor-not-allowed"
+            key={entry.value}
+            disabled={!connected || submitting !== null}
+            onClick={() => void triggerAction(entry.value)}
+            className={`text-xs px-3 py-1 rounded-full ${connected ? 'cursor-pointer' : 'cursor-not-allowed opacity-45'}`}
             style={{
               background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
               color: 'var(--color-text-tertiary)',
               border: '1px solid var(--color-border)',
             }}
-            title="Backend d'action alerte absent"
+            title={connected ? "Journalise l'action d'alerte dans Hermès" : "Backend d'action alerte absent"}
           >
-            {label}
+            {submitting === entry.value ? '...' : entry.label}
           </button>
         ))}
       </div>
@@ -2499,8 +2527,10 @@ function AlertRow({
 
 function AlertsSection({
   alerts,
+  onAlertAction,
 }: {
   alerts: Array<{ level: string; title: string; detail: string }>;
+  onAlertAction: (action: HermesAlertAction, alert: { level: string; title: string; detail: string }) => Promise<void>;
 }) {
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
     try {
@@ -2613,6 +2643,7 @@ function AlertsSection({
                     level={a.level}
                     title={a.title}
                     detail={a.detail}
+                    onAction={(action) => onAlertAction(action, a)}
                     onDismiss={() => dismiss(alertFingerprint(a))}
                   />
                 </motion.div>
@@ -2942,6 +2973,7 @@ export function JarvisPersonalPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forceHermesChatFocus, setForceHermesChatFocus] = useState(false);
+  const [alertActionKey, setAlertActionKey] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -2989,6 +3021,24 @@ export function JarvisPersonalPage() {
       throw err;
     }
   }, [refresh]);
+
+  const handleAlertAction = useCallback(async (
+    action: HermesAlertAction,
+    alert: { level: string; title: string; detail: string },
+  ) => {
+    try {
+      const result = await submitHermesAlertAction(action, {
+        alert_title: alert.title,
+        alert_detail: alert.detail,
+        alert_level: alert.level,
+        source: 'cockpit',
+      });
+      toast.success(result.message || "Action d'alerte enregistrée");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Action d'alerte impossible");
+      throw err;
+    }
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -3404,7 +3454,7 @@ export function JarvisPersonalPage() {
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.19 }}>
-          <AlertsSection alerts={data.alerts} />
+          <AlertsSection alerts={data.alerts} onAlertAction={handleAlertAction} />
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, delay: 0.26 }}>
@@ -3787,6 +3837,11 @@ export function JarvisPersonalPage() {
               {data.alerts.map((alert, index) => {
                 const isError = alert.level === 'error';
                 const accentColor = isError ? 'var(--color-error)' : alert.level === 'warning' ? 'var(--color-warning)' : 'var(--color-accent-blue)';
+                const alertActions = [
+                  { label: 'Corriger', value: 'fix' as HermesAlertAction },
+                  { label: 'Créer tâche', value: 'create_task' as HermesAlertAction },
+                  { label: 'Ignorer', value: 'ignore' as HermesAlertAction },
+                ];
                 return (
                   <div key={`${alert.title}-${index}`} className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-bg-secondary)', borderLeft: `3px solid ${accentColor}` }}>
                     <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
@@ -3798,24 +3853,47 @@ export function JarvisPersonalPage() {
                       </div>
                       <span
                         className="text-[10px] font-medium px-2 py-0.5 rounded"
-                        style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}
+                        style={{
+                          background: 'color-mix(in srgb, var(--color-success) 12%, transparent)',
+                          color: 'var(--color-success)',
+                          border: '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)',
+                        }}
                       >
-                        [ACTION NON CONNECTÉE]
+                        [ACTION CONNECTÉE]
                       </span>
                     </div>
                     <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                       {alert.detail}
                     </div>
                     <div className="flex flex-wrap gap-2 mt-3">
-                      <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-error) 12%, transparent)', color: 'var(--color-error)', border: '1px solid color-mix(in srgb, var(--color-error) 20%, transparent)' }}>
-                        Corriger
-                      </button>
-                      <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-accent-blue) 12%, transparent)', color: 'var(--color-accent-blue)', border: '1px solid color-mix(in srgb, var(--color-accent-blue) 20%, transparent)' }}>
-                        Créer tâche
-                      </button>
-                      <button disabled className="text-xs px-3 py-1 rounded-full opacity-40 cursor-not-allowed" style={{ background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}>
-                        Ignorer
-                      </button>
+                      {alertActions.map((entry) => {
+                        const key = `${index}:${entry.value}`;
+                        const busy = alertActionKey === key;
+                        const busyAny = alertActionKey !== null;
+                        return (
+                          <button
+                            key={entry.value}
+                            disabled={busyAny}
+                            onClick={() => void (async () => {
+                              setAlertActionKey(key);
+                              try {
+                                await handleAlertAction(entry.value, alert);
+                              } finally {
+                                setAlertActionKey(null);
+                              }
+                            })()}
+                            className="text-xs px-3 py-1 rounded-full cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            style={entry.value === 'fix'
+                              ? { background: 'color-mix(in srgb, var(--color-error) 12%, transparent)', color: 'var(--color-error)', border: '1px solid color-mix(in srgb, var(--color-error) 20%, transparent)' }
+                              : entry.value === 'create_task'
+                                ? { background: 'color-mix(in srgb, var(--color-accent-blue) 12%, transparent)', color: 'var(--color-accent-blue)', border: '1px solid color-mix(in srgb, var(--color-accent-blue) 20%, transparent)' }
+                                : { background: 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}
+                            title="Journalise l'action d'alerte dans Hermès"
+                          >
+                            {busy ? '...' : entry.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );

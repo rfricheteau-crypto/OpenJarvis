@@ -259,6 +259,42 @@ export async function submitHermesValidation(
   return res.json();
 }
 
+export type HermesAlertAction = 'fix' | 'create_task' | 'ignore';
+
+export interface HermesAlertActionResponse {
+  ok: boolean;
+  connected: boolean;
+  executed: boolean;
+  status: string;
+  action: HermesAlertAction;
+  message: string;
+  recorded_at: string;
+}
+
+export async function submitHermesAlertAction(
+  action: HermesAlertAction,
+  payload: {
+    alert_title: string;
+    alert_detail?: string;
+    alert_level?: string;
+    source?: string;
+  },
+): Promise<HermesAlertActionResponse> {
+  const res = await fetch(`${getBase()}/api/hermes/alerts/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      alert_title: payload.alert_title,
+      alert_detail: payload.alert_detail || '',
+      alert_level: payload.alert_level || 'warning',
+      source: payload.source || 'cockpit',
+    }),
+  });
+  if (!res.ok) throw new Error(`Failed to submit Hermès alert action: ${res.status}`);
+  return res.json();
+}
+
 export interface ObsidianIdeaItem {
   id: string;
   text: string;

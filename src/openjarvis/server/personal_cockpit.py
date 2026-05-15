@@ -55,6 +55,7 @@ HERMES_OPENAI_USAGE_LOG_PATH = HERMES_DIR / "openai_usage_log.jsonl"
 HERMES_OPENAI_BUDGET_STATE_PATH = HERMES_DIR / "openai_budget_state.json"
 HERMES_PENDING_VALIDATIONS_PATH = HERMES_DIR / "pending_validations.json"
 HERMES_VALIDATION_STATE_PATH = HERMES_DIR / "validation_state.json"
+HERMES_ALERT_ACTIONS_LOG_PATH = HERMES_DIR / "alert_actions.jsonl"
 HERMES_OBSIDIAN_ACTION_INBOX_PATH = HERMES_DIR / "obsidian_action_inbox.json"
 OBSIDIAN_ROOT = Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "Organisation Ruth"
 OBSIDIAN_IDEAS_PATH = OBSIDIAN_ROOT / "_autres-projets" / "ideas-inbox.md"
@@ -141,6 +142,14 @@ class HermesChatRequest(BaseModel):
 class HermesValidationRequest(BaseModel):
     decision: Literal["approve", "reject"]
     note: str = Field(default="", max_length=2000)
+
+
+class HermesAlertActionRequest(BaseModel):
+    action: Literal["fix", "create_task", "ignore"]
+    alert_title: str = Field(min_length=1, max_length=300)
+    alert_detail: str = Field(default="", max_length=4000)
+    alert_level: str = Field(default="warning", max_length=32)
+    source: str = Field(default="cockpit", max_length=64)
 
 
 class IdeaCaptureRequest(BaseModel):
@@ -2438,6 +2447,36 @@ async def capture_idea(body: IdeaCaptureRequest):
     except Exception:
         logger.exception("capture_idea failed")
         return {"obsidian_path": "", "section": section, "ok": False}
+
+
+@hermes_chat_router.post("/alerts/action")
+@router.post("/alerts/action")
+async def hermes_alert_action(request_body: HermesAlertActionRequest):
+    """Record cockpit alert actions without triggering external side effects."""
+    action_messages = {
+        "fix": "Action 'Corriger' enregistrée.",
+        "create_task": "Action 'Créer tâche' enregistrée.",
+        "ignore": "Action 'Ignorer' enregistrée.",
+    }
+    payload = {
+        "kind": "cockpit_alert_action",
+        "source": request_body.source,
+        "action": request_body.action,
+        "alert_title": request_body.alert_title.strip(),
+        "alert_detail": request_body.alert_detail.strip(),
+        "alert_level": request_body.alert_level.strip().lower() or "warning",
+        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    _append_jsonl(HERMES_ALERT_ACTIONS_LOG_PATH, payload)
+    return {
+        "ok": True,
+        "connected": True,
+        "executed": False,
+        "status": "recorded",
+        "action": request_body.action,
+        "message": action_messages.get(request_body.action, "Action alerte enregistrée."),
+        "recorded_at": payload["recorded_at"],
+    }
 
 
 @hermes_chat_router.post("/validate")
