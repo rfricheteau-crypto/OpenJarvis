@@ -49,6 +49,7 @@ HERMES_CURRENT_PACKET_PATH = HERMES_DIR / "current_packet.json"
 HERMES_CURRENT_TOOL_DECISION_PATH = HERMES_DIR / "current_tool_decision.json"
 HERMES_CURRENT_DELEGATION_PATH = HERMES_DIR / "current_delegation.json"
 HERMES_CURRENT_TOOL_RESEARCH_PATH = HERMES_DIR / "current_tool_research.json"
+HERMES_CURRENT_CODEX_HANDOFF_PATH = HERMES_DIR / "current_codex_handoff.json"
 HERMES_RECENT_TRACE_JSON_PATH = HERMES_DIR / "recent_trace.json"
 HERMES_RECENT_TRACE_JSONL_PATH = HERMES_DIR / "recent_trace.jsonl"
 HERMES_OPENAI_USAGE_LOG_PATH = HERMES_DIR / "openai_usage_log.jsonl"
@@ -56,6 +57,7 @@ HERMES_OPENAI_BUDGET_STATE_PATH = HERMES_DIR / "openai_budget_state.json"
 HERMES_PENDING_VALIDATIONS_PATH = HERMES_DIR / "pending_validations.json"
 HERMES_VALIDATION_STATE_PATH = HERMES_DIR / "validation_state.json"
 HERMES_ALERT_ACTIONS_LOG_PATH = HERMES_DIR / "alert_actions.jsonl"
+HERMES_CODEX_HANDOFF_EVENTS_LOG_PATH = HERMES_DIR / "codex_handoff_events.jsonl"
 HERMES_OBSIDIAN_ACTION_INBOX_PATH = HERMES_DIR / "obsidian_action_inbox.json"
 OBSIDIAN_ROOT = Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "Organisation Ruth"
 OBSIDIAN_IDEAS_PATH = OBSIDIAN_ROOT / "_autres-projets" / "ideas-inbox.md"
@@ -150,6 +152,14 @@ class HermesAlertActionRequest(BaseModel):
     alert_detail: str = Field(default="", max_length=4000)
     alert_level: str = Field(default="warning", max_length=32)
     source: str = Field(default="cockpit", max_length=64)
+
+
+class HermesCodexHandoffAckRequest(BaseModel):
+    handoff_id: str = Field(default="", max_length=128)
+    status: Literal["received", "running", "done", "failed"]
+    summary: str = Field(default="", max_length=2000)
+    result_summary: str = Field(default="", max_length=4000)
+    source: str = Field(default="codex", max_length=64)
 
 
 class IdeaCaptureRequest(BaseModel):
@@ -282,6 +292,170 @@ def _direct_clear_hermes_validation(
     validation_state["updated_at"] = now
     _write_json_atomic(HERMES_VALIDATION_STATE_PATH, validation_state)
     return resolved
+
+
+def _hermes_core_delegation_api():
+    if str(PERSONAL_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PERSONAL_ROOT))
+    from hermes_core import record_delegation_result_via_core
+
+    return record_delegation_result_via_core
+
+
+def _append_recent_trace_event(*, event_type: str, status: str, tool: str, notes: str) -> None:
+    event = {
+        "event_type": event_type,
+        "status": status,
+        "tool": tool,
+        "notes": notes,
+    }
+    current = _load_json(HERMES_RECENT_TRACE_JSON_PATH) or {}
+    recent = current if isinstance(current, list) else current.get("recent_trace", [])
+    if not isinstance(recent, list):
+        recent = []
+    recent = [item for item in recent if isinstance(item, dict)]
+    recent.append(event)
+    recent = recent[-20:]
+    _write_json_atomic(HERMES_RECENT_TRACE_JSON_PATH, {"recent_trace": recent})
+    _append_jsonl(HERMES_RECENT_TRACE_JSONL_PATH, event)
+
+
+def _active_runtime_delegation_target() -> str:
+    current_request = _load_json(HERMES_CURRENT_REQUEST_PATH) or {}
+    current_packet = _load_json(HERMES_CURRENT_PACKET_PATH) or {}
+    current_delegation = _load_json(HERMES_CURRENT_DELEGATION_PATH) or {}
+    return str(
+        current_delegation.get("delegation_target")
+        or current_request.get("delegation_target")
+        or current_packet.get("tool_id")
+        or ""
+    ).strip()
+
+
+def _snapshot_fields(source: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {}
+    for key in fields:
+        value = source.get(key)
+        if value in (None, ""):
+            continue
+        snapshot[key] = value
+    return snapshot
+
+
+def _build_codex_handoff_payload(
+    existing: dict[str, Any] | None = None,
+    *,
+    include_full: bool = False,
+) -> dict[str, Any]:
+    existing = existing if isinstance(existing, dict) else {}
+    current_request = _load_json(HERMES_CURRENT_REQUEST_PATH) or {}
+    current_packet = _load_json(HERMES_CURRENT_PACKET_PATH) or {}
+    request_id = str(existing.get("request_id") or current_request.get("request_id") or "").strip()
+    packet_id = str(existing.get("packet_id") or current_packet.get("packet_id") or "").strip()
+    active_target = _active_runtime_delegation_target()
+    existing_target = str(existing.get("target_tool") or "").strip()
+    target_tool = "codex_executor"
+    if existing_target == "codex_executor":
+        target_tool = existing_target
+    elif active_target == "codex_executor":
+        target_tool = active_target
+
+    request_snapshot = _snapshot_fields(
+        current_request,
+        (
+            "request_id",
+            "intent",
+            "summary",
+            "prompt",
+            "project",
+            "priority",
+            "delegation_target",
+            "delegation_status",
+            "execution_status",
+            "created_at",
+            "updated_at",
+        ),
+    )
+    packet_snapshot = _snapshot_fields(
+        current_packet,
+        (
+            "packet_id",
+            "tool_id",
+            "task_summary",
+            "expected_outcome",
+            "risk_level",
+            "status",
+            "execution_status",
+            "created_at",
+            "updated_at",
+        ),
+    )
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    seed = f"{request_id}:{packet_id}:{target_tool or 'codex_executor'}"
+    handoff_id = str(existing.get("handoff_id") or "").strip()
+    if not handoff_id:
+        handoff_id = f"codex-hf-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:12]}"
+    payload = {
+        "handoff_id": handoff_id,
+        "status": str(existing.get("status") or "pending").strip() or "pending",
+        "created_at": str(existing.get("created_at") or now),
+        "updated_at": str(existing.get("updated_at") or now),
+        "completed_at": str(existing.get("completed_at") or ""),
+        "request_id": request_id,
+        "packet_id": packet_id,
+        "target_tool": target_tool or "codex_executor",
+        "title": str(existing.get("title") or "Codex handoff"),
+        "summary": str(existing.get("summary") or ""),
+        "result_summary": str(existing.get("result_summary") or ""),
+        "source": str(existing.get("source") or "hermes_runtime"),
+        "last_source": str(existing.get("last_source") or ""),
+        "request_snapshot": request_snapshot,
+        "packet_snapshot": packet_snapshot,
+    }
+    if include_full:
+        payload["request"] = current_request
+        payload["packet"] = current_packet
+    return payload
+
+
+def _sync_runtime_delegation_progress(*, status: str, summary: str, source: str) -> bool:
+    current_request = _load_json(HERMES_CURRENT_REQUEST_PATH) or {}
+    current_delegation = _load_json(HERMES_CURRENT_DELEGATION_PATH) or {}
+    active_target = _active_runtime_delegation_target()
+    if active_target and active_target != "codex_executor":
+        return False
+    if isinstance(current_request, dict):
+        current_request["codex_handoff_status"] = status
+        current_request["execution_status"] = status
+        current_request["delegation_status"] = status
+        if summary:
+            current_request["codex_handoff_summary"] = summary
+        _write_json_atomic(HERMES_CURRENT_REQUEST_PATH, current_request)
+    if isinstance(current_delegation, dict):
+        current_delegation["codex_handoff_status"] = status
+        current_delegation["delegation_status"] = status
+        if summary:
+            current_delegation["handoff_summary"] = summary
+        _write_json_atomic(HERMES_CURRENT_DELEGATION_PATH, current_delegation)
+
+    core_state = _load_json(HERMES_CORE_STATE_PATH) or {}
+    if isinstance(core_state, dict):
+        state_request = core_state.get("current_request") if isinstance(core_state.get("current_request"), dict) else {}
+        state_delegation = core_state.get("current_delegation") if isinstance(core_state.get("current_delegation"), dict) else {}
+        state_request.update(current_request)
+        state_delegation.update(current_delegation)
+        core_state["current_request"] = state_request
+        core_state["current_delegation"] = state_delegation
+        core_state["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _write_json_atomic(HERMES_CORE_STATE_PATH, core_state)
+
+    _append_recent_trace_event(
+        event_type="codex_handoff_status",
+        status=status,
+        tool="codex_executor",
+        notes=summary or f"Codex handoff status={status} ({source})",
+    )
+    return True
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -1157,6 +1331,7 @@ def _orchestrator_payload(core_state: dict[str, Any]) -> dict[str, Any]:
     current_tool_decision = _load_json(HERMES_CURRENT_TOOL_DECISION_PATH)
     current_delegation = _load_json(HERMES_CURRENT_DELEGATION_PATH)
     current_tool_research = _load_json(HERMES_CURRENT_TOOL_RESEARCH_PATH)
+    current_codex_handoff = _load_json(HERMES_CURRENT_CODEX_HANDOFF_PATH)
     recent_trace = _load_recent_trace()
     return {
         "current_request": current_request or core_state.get("current_request"),
@@ -1164,6 +1339,7 @@ def _orchestrator_payload(core_state: dict[str, Any]) -> dict[str, Any]:
         "current_tool_decision": current_tool_decision or core_state.get("current_tool_decision"),
         "current_delegation": current_delegation or core_state.get("current_delegation"),
         "current_tool_research": current_tool_research or core_state.get("current_tool_research"),
+        "current_codex_handoff": current_codex_handoff or {},
         "recent_trace": recent_trace or core_state.get("recent_trace") or [],
     }
 
@@ -2172,6 +2348,7 @@ def _personal_cockpit_payload() -> dict[str, Any]:
                 "hermes_current_tool_decision": HERMES_CURRENT_TOOL_DECISION_PATH,
                 "hermes_current_delegation": HERMES_CURRENT_DELEGATION_PATH,
                 "hermes_current_tool_research": HERMES_CURRENT_TOOL_RESEARCH_PATH,
+                "hermes_current_codex_handoff": HERMES_CURRENT_CODEX_HANDOFF_PATH,
                 "hermes_recent_trace_json": HERMES_RECENT_TRACE_JSON_PATH,
                 "hermes_recent_trace_jsonl": HERMES_RECENT_TRACE_JSONL_PATH,
             }.items()
@@ -2476,6 +2653,127 @@ async def hermes_alert_action(request_body: HermesAlertActionRequest):
         "action": request_body.action,
         "message": action_messages.get(request_body.action, "Action alerte enregistrée."),
         "recorded_at": payload["recorded_at"],
+    }
+
+
+@hermes_chat_router.get("/codex-handoff")
+@router.get("/hermes/codex-handoff")
+async def hermes_codex_handoff_state(full: bool = False):
+    existing = _load_json(HERMES_CURRENT_CODEX_HANDOFF_PATH) or {}
+    compact_payload = _build_codex_handoff_payload(existing, include_full=False)
+    _write_json_atomic(HERMES_CURRENT_CODEX_HANDOFF_PATH, compact_payload)
+    if full:
+        return {"ok": True, "handoff": _build_codex_handoff_payload(compact_payload, include_full=True)}
+    return {"ok": True, "handoff": compact_payload}
+
+
+@hermes_chat_router.post("/codex-handoff/ack")
+@router.post("/hermes/codex-handoff/ack")
+async def hermes_codex_handoff_ack(request_body: HermesCodexHandoffAckRequest):
+    existing = _load_json(HERMES_CURRENT_CODEX_HANDOFF_PATH) or {}
+    handoff = _build_codex_handoff_payload(existing, include_full=False)
+    if request_body.handoff_id.strip() and request_body.handoff_id.strip() != str(handoff.get("handoff_id", "")):
+        raise HTTPException(status_code=409, detail="handoff_id différent du handoff Codex actif.")
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    summary = request_body.summary.strip()
+    result_summary = request_body.result_summary.strip()
+    warning = ""
+
+    if request_body.status == "received":
+        summary = summary or "Codex a accusé réception du handoff."
+    elif request_body.status == "running":
+        summary = summary or "Codex exécute le handoff."
+    elif request_body.status == "done":
+        result_summary = result_summary or summary or "Codex a terminé le handoff."
+        summary = summary or result_summary
+    elif request_body.status == "failed":
+        result_summary = result_summary or summary or "Codex a échoué sur le handoff."
+        summary = summary or result_summary
+
+    handoff.update(
+        {
+            "status": request_body.status,
+            "summary": summary,
+            "updated_at": now,
+            "last_source": request_body.source,
+        }
+    )
+    if request_body.status in {"done", "failed"}:
+        handoff["completed_at"] = now
+        handoff["result_summary"] = result_summary
+    else:
+        handoff["completed_at"] = ""
+        handoff["result_summary"] = ""
+
+    _append_jsonl(
+        HERMES_CODEX_HANDOFF_EVENTS_LOG_PATH,
+        {
+            "handoff_id": handoff.get("handoff_id", ""),
+            "status": request_body.status,
+            "summary": summary,
+            "result_summary": result_summary,
+            "source": request_body.source,
+            "recorded_at": now,
+        },
+    )
+
+    if request_body.status in {"received", "running"}:
+        synced = _sync_runtime_delegation_progress(
+            status=f"handoff_{request_body.status}",
+            summary=summary,
+            source=request_body.source,
+        )
+        if not synced:
+            active_target = _active_runtime_delegation_target() or "unknown"
+            warning = (
+                "Handoff Codex journalisé, mais la délégation active n'est pas codex_executor "
+                f"(target actif: {active_target})."
+            )
+    else:
+        execution_status = "executed" if request_body.status == "done" else "failed"
+        active_target = _active_runtime_delegation_target()
+        if active_target and active_target != "codex_executor":
+            warning = (
+                "Résultat Codex journalisé sans muter la délégation active "
+                f"(target actif: {active_target})."
+            )
+            _append_recent_trace_event(
+                event_type="codex_handoff_result",
+                status=execution_status,
+                tool="codex_executor",
+                notes=result_summary,
+            )
+        else:
+            try:
+                record_delegation_result_via_core = _hermes_core_delegation_api()
+                record_delegation_result_via_core(
+                    PERSONAL_ROOT,
+                    execution_status=execution_status,
+                    result_summary=result_summary,
+                    tool_id="codex_executor",
+                )
+                _append_recent_trace_event(
+                    event_type="codex_handoff_result",
+                    status=execution_status,
+                    tool="codex_executor",
+                    notes=result_summary,
+                )
+            except Exception as exc:
+                warning = f"Fallback runtime utilisé pour statut Codex {request_body.status}: {exc}"
+                synced = _sync_runtime_delegation_progress(
+                    status="result_logged" if request_body.status == "done" else "failed",
+                    summary=result_summary,
+                    source=request_body.source,
+                )
+                if not synced and not warning:
+                    warning = "Handoff Codex finalisé mais délégation active hors codex_executor."
+
+    _write_json_atomic(HERMES_CURRENT_CODEX_HANDOFF_PATH, handoff)
+    return {
+        "ok": True,
+        "handoff": handoff,
+        "warning": warning,
     }
 
 
