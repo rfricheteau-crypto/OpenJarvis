@@ -40,6 +40,7 @@ class SpeechBackend(ABC):
         *,
         format: str = "wav",
         language: Optional[str] = None,
+        prompt: Optional[str] = None,
     ) -> TranscriptionResult:
         """Transcribe audio bytes to text."""
 

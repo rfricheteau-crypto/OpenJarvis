@@ -33,6 +33,7 @@ class DeepgramSpeechBackend(SpeechBackend):
         *,
         format: str = "wav",
         language: Optional[str] = None,
+        prompt: Optional[str] = None,
     ) -> TranscriptionResult:
         """Transcribe audio using Deepgram's API."""
         if self._client is None:

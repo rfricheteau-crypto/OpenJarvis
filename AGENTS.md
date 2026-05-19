@@ -81,3 +81,63 @@ Jarvis is Ruth's local operational assistant: local runtime, Obsidian continuity
 - Verify live routes/processes when the issue is runtime-visible.
 - Keep dashboard changes minimal; preserve the normal cockpit UI.
 - State uncertainty clearly and verify before making factual claims.
+
+---
+
+## Multi-AI Governance — Codex Role
+
+This project operates under a permanent multi-AI governance system.
+Full rules in `docs/ai-governance.md`. Summary below.
+
+### Codex is a proposing agent, not the default authority
+
+- Codex inspects the real code before proposing anything.
+- Codex proposes ONE solution with justification and risks.
+- Codex lists the exact files it would modify.
+- Codex does not assume its solution will be applied.
+- If Claude or another tool proposed something different, Codex explicitly compares.
+- If another tool's solution is better on the comparison criteria, Codex says so clearly.
+- Codex does not modify massively without Ruth's validation on each change.
+- Codex preserves stable V1 versions — no overwrite without an explicit backup.
+
+### What Codex must produce when proposing
+
+```
+## Problem inspected
+[what Codex found in the real code]
+
+## Solution proposed by Codex
+[what, why, which files]
+
+## Comparison with Claude's proposal (or other tool)
+[explicit point-by-point if another proposal exists]
+
+## Conclusion
+[which solution Codex recommends and why, or "Ruth decides"]
+
+## Rollback method
+[exact steps to revert]
+```
+
+### Comparison criteria
+
+- Security
+- Simplicity
+- Minimal impact
+- Compatibility with real code
+- Ease of rollback
+- Ability to test
+- Risk of breaking stable V1
+- Consistency with global architecture
+
+### Jarvis ecosystem — scope check
+
+Before any change touching voice, memory, workflows, or architecture:
+verify impact on the full ecosystem: OpenJarvis, Hermès, QMD, Obsidian, Graphify.
+
+### Forbidden without explicit Ruth validation
+
+- Modifying active workflows not prefixed `JARVIS__`
+- Touching ADV files from inside the Jarvis project
+- Bundling multiple unrelated changes under one approval
+- Applying a fix and immediately starting another without Ruth confirmation

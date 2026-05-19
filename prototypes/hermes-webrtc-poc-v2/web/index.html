@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr" translate="no" class="notranslate">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
+    <title>Hermès WebRTC POC V2</title>
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body class="notranslate" translate="no">
+    <main class="app-shell">
+      <section class="hero-panel">
+        <div class="eyebrow">Hermès WebRTC POC · V2 experimental</div>
+        <h1>Discussion vocale temps réel isolée</h1>
+        <p class="intro">Espace V2 autonome pour reconstruire cockpit, commandes et barge-in sans toucher à la V1.</p>
+        <div class="controls">
+          <button id="connectBtn">Activer la conversation</button>
+          <button id="disconnectBtn" disabled>Couper</button>
+        </div>
+        <div class="badges">
+          <span id="statusBadge" class="badge badge-idle">Déconnecté</span>
+          <span id="audioBadge" class="badge">V2 isolée · Kokoro strict · port séparé</span>
+        </div>
+      </section>
+
+      <section class="orb-panel">
+        <div id="orb" class="orb orb-idle"></div>
+        <div id="stateLabel" class="state-label">En attente</div>
+        <div id="stateDetail" class="state-detail">Clique pour démarrer le prototype.</div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <h2>Transcription & réponse</h2>
+          <div id="conversation" class="conversation"></div>
+        </article>
+        <article class="panel">
+          <h2>Journal</h2>
+          <div id="events" class="events"></div>
+        </article>
+      </section>
+
+      <audio id="remoteAudio" autoplay playsinline></audio>
+    </main>
+    <script type="module" src="/web/app.js"></script>
+  </body>
+</html>

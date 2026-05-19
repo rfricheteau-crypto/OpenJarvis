@@ -775,6 +775,13 @@ async def transcribe_speech(request: Request):
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception(
+            "Speech transcription failed backend=%s filename=%s bytes=%s language=%s",
+            getattr(backend, "backend_id", "unknown"),
+            filename,
+            len(audio_bytes),
+            language or None,
+        )
         detail = f"Speech transcription failed: {exc}"
         raise HTTPException(status_code=503, detail=detail) from exc
 
@@ -783,6 +790,7 @@ async def transcribe_speech(request: Request):
         "language": result.language,
         "confidence": result.confidence,
         "duration_seconds": result.duration_seconds,
+        "backend": getattr(backend, "backend_id", "unknown"),
     }
 
 

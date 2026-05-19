@@ -33,6 +33,7 @@ class OpenAIWhisperBackend(SpeechBackend):
         *,
         format: str = "wav",
         language: Optional[str] = None,
+        prompt: Optional[str] = None,
     ) -> TranscriptionResult:
         """Transcribe audio using OpenAI's Whisper API."""
         if self._client is None:
@@ -45,6 +46,8 @@ class OpenAIWhisperBackend(SpeechBackend):
         kwargs: dict = {"model": "whisper-1", "file": audio_file}
         if language:
             kwargs["language"] = language
+        if prompt:
+            kwargs["prompt"] = prompt
         kwargs["response_format"] = "verbose_json"
 
         response = self._client.audio.transcriptions.create(**kwargs)
