@@ -17,6 +17,7 @@ const DataSourcesPage = lazy(() => import('./pages/DataSourcesPage').then((m) =>
 const LogsPage = lazy(() => import('./pages/LogsPage').then((m) => ({ default: m.LogsPage })));
 const JarvisPersonalPage = lazy(() => import('./pages/JarvisPersonalPage').then((m) => ({ default: m.JarvisPersonalPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then((m) => ({ default: m.ProjectDetailPage })));
+const HermesChatPage = lazy(() => import('./pages/HermesChatPage').then((m) => ({ default: m.HermesChatPage })));
 function RouteFallback() {
   return (
     <div className="flex-1 flex items-center justify-center">
@@ -197,6 +198,7 @@ export default function App() {
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="jarvis-personal" element={<JarvisPersonalPage />} />
             <Route path="jarvis-personal/chat" element={<Navigate to="/jarvis-personal" replace />} />
+            <Route path="hermes-chat" element={<HermesChatPage />} />
             <Route path="jarvis-personal/project/:id" element={<ProjectDetailPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="get-started" element={<GetStartedPage />} />
