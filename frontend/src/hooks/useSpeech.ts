@@ -182,7 +182,13 @@ export function useSpeech(options: UseSpeechOptions = {}) {
     try {
       emitDiagnostic('start_micro');
       emitDiagnostic('Demande permission micro…');
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       emitDiagnostic('Micro autorisé.');
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
@@ -548,7 +554,13 @@ export function useSpeech(options: UseSpeechOptions = {}) {
     cleanupVad();
     stopTracks();
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
     streamRef.current = stream;
 
     const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
