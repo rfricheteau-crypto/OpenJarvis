@@ -54,8 +54,8 @@ export function Sidebar() {
   };
 
   const navItems = [
-    { path: '/jarvis-personal?mode=chat#hermes-chat', icon: Sparkles, label: 'Discussion avec Hermès' },
-    { path: '/jarvis-personal', icon: RadioTower, label: 'Ruth OS 360°' },
+    { path: '/jarvis-personal', icon: Sparkles, label: 'Discussion avec Hermès' },
+    { path: '/jarvis-personal?mode=cockpit', icon: RadioTower, label: 'Ruth OS 360°' },
     { path: '/dashboard', icon: BarChart3, label: 'Tableau de bord' },
     { path: '/logs', icon: ScrollText, label: 'Journaux' },
     { path: '/settings', icon: Settings, label: 'Parametres' },

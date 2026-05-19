@@ -196,7 +196,7 @@ export default function App() {
             <Route index element={<ChatPage />} />
             <Route path="dashboard" element={<DashboardPage />} />
             <Route path="jarvis-personal" element={<JarvisPersonalPage />} />
-            <Route path="jarvis-personal/chat" element={<Navigate to="/jarvis-personal?mode=chat#hermes-chat" replace />} />
+            <Route path="jarvis-personal/chat" element={<Navigate to="/jarvis-personal" replace />} />
             <Route path="jarvis-personal/project/:id" element={<ProjectDetailPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="get-started" element={<GetStartedPage />} />

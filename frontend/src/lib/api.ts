@@ -440,6 +440,69 @@ export async function sendPersonalCockpitChat(
   return res.json();
 }
 
+export interface VoiceSpeakResponse {
+  ok: boolean;
+  request_id: string;
+  engine_requested: 'kokoro' | 'piper' | 'espeak';
+  engine_used: string;
+  audio_file: string;
+  audio_url: string;
+  elapsed_ms: number;
+  speed?: number;
+  warnings: string[];
+}
+
+export interface VoiceSpeakResolved extends VoiceSpeakResponse {
+  audio_url_abs: string;
+}
+
+export interface VoiceHealthResponse {
+  sidecar_available: boolean;
+  preferred_engine: 'kokoro';
+  fallback_available: boolean;
+  last_engine_used: 'kokoro' | 'piper' | 'espeak' | 'browser' | null;
+  last_error: string | null;
+  status: 'ready' | 'degraded' | 'unavailable';
+}
+
+export async function fetchVoiceHealth(): Promise<VoiceHealthResponse> {
+  const res = await fetch(`${getBase()}/api/voice/health`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) throw new Error(`Voice health failed: ${res.status}`);
+  return res.json();
+}
+
+export async function speakWithLocalVoice(
+  text: string,
+  engine: 'kokoro' | 'piper' | 'espeak' = 'kokoro',
+  speed = 1.0,
+): Promise<VoiceSpeakResolved> {
+  const payload = {
+    text,
+    engine,
+    speed,
+  };
+  const res = await fetch(`${getBase()}/api/voice/speak`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(45000),
+  });
+  if (!res.ok) {
+    let detail = `Voice speak failed: ${res.status}`;
+    try {
+      const parsed = await res.json();
+      detail = String(parsed?.detail || detail);
+    } catch {}
+    throw new Error(detail);
+  }
+  const data = (await res.json()) as VoiceSpeakResponse;
+  const base = getBase();
+  const audio_url_abs = data.audio_url.startsWith('http') ? data.audio_url : `${base}${data.audio_url}`;
+  return { ...data, audio_url_abs };
+}
+
 export async function fetchTraces(limit: number = 50): Promise<unknown> {
   if (isTauri()) {
     try {
@@ -468,7 +531,11 @@ export interface SpeechHealth {
   reason?: string;
 }
 
-export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<TranscriptionResult> {
+export async function transcribeAudio(
+  audioBlob: Blob,
+  filename = 'recording.webm',
+  language = 'fr',
+): Promise<TranscriptionResult> {
   if (isTauri()) {
     try {
       const buffer = await audioBlob.arrayBuffer();
@@ -482,11 +549,52 @@ export async function transcribeAudio(audioBlob: Blob, filename = 'recording.web
   }
   const formData = new FormData();
   formData.append('file', audioBlob, filename);
-  const res = await fetch(`${getBase()}/v1/speech/transcribe`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
+  if (language) formData.append('language', language);
+
+  const fetchTranscription = async (timeoutMs: number): Promise<Response> => {
+    return fetch(`${getBase()}/v1/speech/transcribe`, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  };
+
+  const isAbortError = (err: unknown): boolean => {
+    const message = err instanceof Error ? err.message.toLowerCase() : '';
+    const name = err instanceof Error ? err.name.toLowerCase() : '';
+    return (
+      name.includes('abort') ||
+      name.includes('timeout') ||
+      message.includes('aborted') ||
+      message.includes('timeout')
+    );
+  };
+
+  let res: Response;
+  try {
+    res = await fetchTranscription(45000);
+  } catch (err) {
+    if (isAbortError(err)) {
+      try {
+        // One safe retry for local STT spikes (model warmup / CPU contention).
+        res = await fetchTranscription(90000);
+      } catch (retryErr) {
+        const retryMessage = retryErr instanceof Error ? retryErr.message : 'network error';
+        throw new Error(`Transcription failed: ${retryMessage}`);
+      }
+    } else {
+      const message = err instanceof Error ? err.message : 'network error';
+      throw new Error(`Transcription failed: ${message}`);
+    }
+  }
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const data = await res.json();
+      detail = typeof data?.detail === 'string' ? data.detail : '';
+    } catch {}
+    throw new Error(`Transcription failed: ${res.status}${detail ? ` (${detail})` : ''}`);
+  }
   return res.json();
 }
 
@@ -495,12 +603,18 @@ export async function fetchSpeechHealth(): Promise<SpeechHealth> {
     try {
       return await tauriInvoke<SpeechHealth>('speech_health');
     } catch {
-      return { available: false };
+      // Fall through to HTTP health endpoint in case the Tauri command is unavailable.
     }
   }
-  const res = await fetch(`${getBase()}/v1/speech/health`);
-  if (!res.ok) return { available: false };
-  return res.json();
+  try {
+    const res = await fetch(`${getBase()}/v1/speech/health`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { available: false, reason: `HTTP ${res.status}` };
+    return res.json();
+  } catch {
+    return { available: false, reason: 'Speech health request failed' };
+  }
 }
 
 export async function fetchCloudKeyStatus(): Promise<{

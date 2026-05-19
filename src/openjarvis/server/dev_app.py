@@ -18,6 +18,7 @@ from openjarvis.intelligence import (
     register_builtin_models,
 )
 from openjarvis.security import setup_security
+from openjarvis.speech._discovery import get_speech_backend
 from openjarvis.server.app import create_app
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,14 @@ def create_dev_app():
         engine_models = all_models.get(engine_name, [])
         model_name = engine_models[0] if engine_models else "dev-model"
 
+    speech_backend = None
+    try:
+        speech_backend = get_speech_backend(config)
+        if speech_backend:
+            logger.info("Dev speech backend enabled: %s", speech_backend.backend_id)
+    except Exception as exc:
+        logger.debug("Dev speech backend discovery failed: %s", exc)
+
     return create_app(
         engine,
         model_name,
@@ -108,5 +117,6 @@ def create_dev_app():
         engine_name=engine_name,
         agent_name=config.server.agent or "",
         config=config,
+        speech_backend=speech_backend,
         cors_origins=config.server.cors_origins,
     )
