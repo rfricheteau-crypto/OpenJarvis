@@ -931,7 +931,7 @@ export function ProjectDetailPage() {
             transition={{ duration: 0.22, delay: 0.28 }}
           >
             <button
-              onClick={() => navigate('/jarvis-personal?mode=chat#hermes-chat')}
+              onClick={() => navigate('/jarvis-personal?mode=chat')}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm cursor-pointer"
               style={{
                 background: 'color-mix(in srgb, var(--color-accent-purple) 12%, var(--color-bg-secondary))',
@@ -1178,6 +1178,7 @@ export function ProjectDetailPage() {
         >
           {project.obsidianPath && (
             <button
+              onClick={() => window.open(`obsidian://open?vault=Organisation%20Ruth&file=${encodeURIComponent(project.obsidianPath!)}`, '_blank')}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm cursor-pointer"
               style={{
                 background: 'var(--color-bg-secondary)',
@@ -1191,6 +1192,7 @@ export function ProjectDetailPage() {
           )}
           {project.graphifyPath && (
             <button
+              onClick={() => window.open('/graphify/jarvis', '_blank')}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm cursor-pointer"
               style={{
                 background: 'var(--color-bg-secondary)',
@@ -1203,7 +1205,7 @@ export function ProjectDetailPage() {
             </button>
           )}
           <button
-            onClick={() => navigate('/jarvis-personal?mode=chat#hermes-chat')}
+            onClick={() => navigate('/jarvis-personal?mode=chat')}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm cursor-pointer"
             style={{
               background: 'color-mix(in srgb, var(--color-accent-purple) 12%, var(--color-bg-secondary))',

@@ -1,4 +1,5 @@
 import { Suspense, lazy } from 'react';
+import { Link } from 'react-router';
 import { ExternalLink, MoveRight, Sparkles } from 'lucide-react';
 
 const EnergyDashboard = lazy(() =>
@@ -51,8 +52,8 @@ export function DashboardPage() {
                   {stamp}
                 </div>
               </div>
-              <a
-                href="/jarvis-personal"
+              <Link
+                to="/jarvis-personal"
                 className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl"
                 style={{
                   background: 'var(--color-accent)',
@@ -63,7 +64,7 @@ export function DashboardPage() {
               >
                 Ouvrir Ruth OS 360°
                 <MoveRight size={15} />
-              </a>
+              </Link>
               <a
                 href="/graphify/jarvis"
                 target="_blank"

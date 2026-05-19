@@ -1093,9 +1093,6 @@ function HermesPanel({
             <Sparkles size={14} />
             {"Répondre à Hermès"}
           </button>
-          <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-            {"🎤 Vocal bientôt disponible"}
-          </span>
         </div>
       </div>
     </div>
@@ -1772,7 +1769,7 @@ function ValenaProjectCard({
 
   return (
     <div
-      className="hud-panel p-5 flex flex-col gap-3 h-full"
+      className="hud-panel p-5 flex flex-col gap-3 h-full cursor-default"
       style={{
         background: `linear-gradient(160deg, color-mix(in srgb, ${accent} 6%, var(--color-surface)) 0%, var(--color-surface) 60%)`,
         border: `1px solid color-mix(in srgb, ${accent} 16%, transparent)`,
@@ -2477,20 +2474,32 @@ function AlertRow({
             <div className="text-sm font-medium" style={{ color: cfg.color }}>
               {title}
             </div>
-            <span
-              className="shrink-0 text-[10px] font-medium px-2 py-0.5 rounded"
-              style={{
-                background: connected
-                  ? 'color-mix(in srgb, var(--color-success) 12%, transparent)'
-                  : 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
-                color: connected ? 'var(--color-success)' : 'var(--color-text-tertiary)',
-                border: connected
-                  ? '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)'
-                  : '1px solid var(--color-border)',
-              }}
-            >
-              {connected ? '[ACTION CONNECTÉE]' : '[ACTION NON CONNECTÉE]'}
-            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span
+                className="text-[10px] font-medium px-2 py-0.5 rounded"
+                style={{
+                  background: connected
+                    ? 'color-mix(in srgb, var(--color-success) 12%, transparent)'
+                    : 'color-mix(in srgb, var(--color-text-tertiary) 10%, transparent)',
+                  color: connected ? 'var(--color-success)' : 'var(--color-text-tertiary)',
+                  border: connected
+                    ? '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)'
+                    : '1px solid var(--color-border)',
+                }}
+              >
+                {connected ? '[ACTION CONNECTÉE]' : '[ACTION NON CONNECTÉE]'}
+              </span>
+              {onDismiss && (
+                <button
+                  onClick={onDismiss}
+                  title="Masquer cette alerte"
+                  className="p-1 rounded cursor-pointer opacity-50 hover:opacity-100 transition-opacity"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
           {detail && (
             <div className="text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>
