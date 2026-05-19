@@ -188,7 +188,13 @@ export function Sidebar() {
           {/* Bottom nav */}
           <nav className="px-2 pb-3 pt-2 flex flex-col gap-0.5" style={{ borderTop: '1px solid var(--color-border)' }}>
             {navItems.map((item) => {
-              const isActive = location.pathname === item.path.split('?')[0].split('#')[0];
+              const isActive = (() => {
+                const [itemPathname, itemQuery] = item.path.split('#')[0].split('?');
+                if (location.pathname !== itemPathname) return false;
+                const currentMode = new URLSearchParams(location.search).get('mode');
+                const itemMode = itemQuery ? new URLSearchParams(itemQuery).get('mode') : null;
+                return currentMode === itemMode;
+              })();
               return (
                 <button
                   key={item.path}

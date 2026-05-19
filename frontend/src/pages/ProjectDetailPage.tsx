@@ -96,6 +96,47 @@ const PROJECTS: Record<string, ProjectData> = {
     ],
     decisions: [],
   },
+  obsidian: {
+    id: 'obsidian',
+    name: 'Obsidian / Vault',
+    tagline: "Mémoire vivante de Ruth OS — notes, projets, décisions",
+    accent: 'var(--color-accent-purple)',
+    kpis: [
+      { label: "Rôle", value: "Source de vérité" },
+      { label: "Vault", value: "Organisation Ruth" },
+      { label: "Accès MCP", value: "QMD actif" },
+    ],
+    decisions: [
+      { text: "Obsidian reste la mémoire source, cockpit = interface", date: "2026-05-12" },
+      { text: "Claude écrit uniquement dans CODEX_RUTH_OS et JARVIS", date: "2026-05-12" },
+    ],
+    obsidianPath: "JARVIS",
+  },
+  graphify: {
+    id: 'graphify',
+    name: 'Graphify',
+    tagline: "Cartographie des dépendances et connaissances",
+    accent: 'var(--color-accent)',
+    kpis: [
+      { label: "Statut", value: "Actif", note: "HTML natif" },
+      { label: "Vault scanné", value: "Organisation Ruth" },
+    ],
+    decisions: [
+      { text: "Graphify utilisé avant toute refacto ou changement d'architecture", date: "2026-04-16" },
+    ],
+    graphifyPath: "/graphify/jarvis",
+  },
+  valena: {
+    id: 'valena',
+    name: 'Valéna',
+    tagline: "Assistante vocale IA personnelle — en conception",
+    accent: '#F87171',
+    kpis: [
+      { label: "Phase", value: "Conception" },
+      { label: "Priorité", value: "Post-ADV V1" },
+    ],
+    decisions: [],
+  },
 };
 
 const actionsKey = (id: string) => `ruth_project_actions_${id}`;

@@ -1868,14 +1868,16 @@ def _recent_alerts(
     if active_until_raw:
         active_dt = _parse_iso(active_until_raw)
         if active_dt and active_dt < datetime.now(active_dt.tzinfo):
-            since = active_until_raw[:16].replace("T", " ")
-            alerts.append(
-                {
-                    "level": "warning",
-                    "title": "Session Voice expirée",
-                    "detail": f"Session expirée depuis {since}. Relancer une session pour réactiver la voix.",
-                }
-            )
+            age_days = (datetime.now(active_dt.tzinfo) - active_dt).days
+            if age_days <= 7:
+                since = active_until_raw[:16].replace("T", " ")
+                alerts.append(
+                    {
+                        "level": "warning",
+                        "title": "Session Voice expirée",
+                        "detail": f"Session expirée depuis {since}. Relancer une session pour réactiver la voix.",
+                    }
+                )
     for label, path in required_files.items():
         if not path.exists():
             alerts.append(
