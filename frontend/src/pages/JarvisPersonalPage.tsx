@@ -516,6 +516,9 @@ function useHermesSpeaker(callbacks?: SpeakerCallbacks) {
         finalize(resolve);
       };
       audio.onerror = () => {
+        try {
+          audio.pause();
+        } catch {}
         markSpeakEnd();
         setIsSpeaking(false);
         finalize(() => reject(new Error('Local audio playback failed')));
@@ -563,11 +566,8 @@ function useHermesSpeaker(callbacks?: SpeakerCallbacks) {
           return { engine: 'none', usedLocalVoice: false, localFailure: false, cancelled: true };
         }
         callbacksRef.current?.onDiagnostic?.(`Kokoro/local voice failed: ${localMessage}`, 'warn');
-        callbacksRef.current?.onDiagnostic?.('Browser fallback used because Kokoro failed.', 'warn');
-        setLastEngine('browser');
-        if (!('speechSynthesis' in window)) {
-          return { engine: 'browser', usedLocalVoice: false, localFailure: true, error: localMessage };
-        }
+        setLastEngine('none');
+        return { engine: 'none', usedLocalVoice: false, localFailure: true, error: localMessage };
       }
     }
 

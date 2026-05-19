@@ -41,11 +41,11 @@ SPOKEN_LIST_REPLY_MAX_CHARS = 420
 SPOKEN_REPLY_MAX_SENTENCES = 3
 SPOKEN_REPLY_MIN_CHARS = 60
 TTS_SPEED = 1.14
-POST_SPEAK_COOLDOWN_SECONDS = 1.2
+POST_SPEAK_COOLDOWN_SECONDS = 0.75
 BARGE_IN_ECHO_MAX_DURATION_SECONDS = 1.2
 BARGE_IN_AUDIO_SETTLE_SECONDS = 0.18
-BARGE_IN_TRANSCRIPT_GUARD_MS = 1800
-BARGE_IN_ACCEPT_AFTER_AUDIO_END_MS = 1200
+BARGE_IN_TRANSCRIPT_GUARD_MS = 1400
+BARGE_IN_ACCEPT_AFTER_AUDIO_END_MS = 700
 BARGE_IN_SHORT_TRANSCRIPT_MAX_CHARS = 12
 BARGE_IN_SHORT_TRANSCRIPT_MAX_TOKENS = 2
 MIN_CAPTURED_AUDIO_SECONDS = 0.28
@@ -286,6 +286,23 @@ def _detect_local_command(text: str) -> str | None:
     return None
 
 
+def _detect_fast_reply(text: str) -> tuple[str, str] | None:
+    folded = _ascii_fold(text.strip())
+    if not folded:
+        return None
+    if folded in {
+        'bonjour',
+        'bonjour hermes',
+        'salut',
+        'salut hermes',
+        'coucou',
+        'coucou hermes',
+        'hello hermes',
+    }:
+        return ('greeting', 'Bonjour Ruth.')
+    return None
+
+
 @dataclass
 class VoiceTurnMetrics:
     turn_id: str
@@ -516,6 +533,10 @@ class HermesVoiceProcessor(FrameProcessor):
             local_command = _detect_local_command(transcript) if CONFIG.enable_local_commands else None
             if local_command:
                 await self._handle_local_command(local_command, transcript, turn)
+                return
+            fast_reply = _detect_fast_reply(transcript)
+            if fast_reply:
+                await self._handle_fast_reply(fast_reply[0], fast_reply[1], transcript, turn)
                 return
             await self._set_state('THINKING', detail='Hermès réfléchit')
             hermes_data = await self._bridge.chat(
@@ -776,6 +797,45 @@ class HermesVoiceProcessor(FrameProcessor):
         await asyncio.sleep(POST_SPEAK_COOLDOWN_SECONDS)
         await self._set_state('LISTENING_AGAIN', detail='Écoute relancée')
 
+    async def _handle_fast_reply(
+        self,
+        intent: str,
+        reply: str,
+        transcript: str,
+        turn: VoiceTurnMetrics | None,
+    ) -> None:
+        self._history.append(ChatTurn(role='assistant', content=reply))
+        await self._emit_event(
+            'fast_reply',
+            {
+                'turn_id': turn.turn_id if turn else None,
+                'intent': intent,
+                'transcript': transcript,
+            },
+        )
+        await self._emit_message('assistant', reply)
+        self._speaking = True
+        await self._set_state('SPEAKING', detail='Hermès répond rapidement')
+        speak_data, reply_wav = await self._bridge.speak_kokoro(reply, speed=TTS_SPEED)
+        if turn:
+            turn.hermes_done_ms = int((time.perf_counter() - turn.started_at) * 1000)
+            turn.tts_done_ms = turn.hermes_done_ms
+        await self._emit_event(
+            'tts_request_done',
+            {
+                'turn_id': turn.turn_id if turn else None,
+                'engine': speak_data.get('engine_used'),
+                'elapsed_ms': speak_data.get('elapsed_ms'),
+                'speed': speak_data.get('speed'),
+                'intent': intent,
+            },
+        )
+        await self._play_tts_audio(reply_wav, turn=turn)
+        self._speaking = False
+        await self._set_state('COOLDOWN', detail='Anti-écho')
+        await asyncio.sleep(POST_SPEAK_COOLDOWN_SECONDS)
+        await self._set_state('LISTENING_AGAIN', detail='Écoute relancée')
+
     async def _play_tts_audio(
         self,
         wav_bytes: bytes,
@@ -870,7 +930,7 @@ class HermesWebRTCSession:
         self.vad = VADProcessor(
             vad_analyzer=SileroVADAnalyzer(
                 sample_rate=16000,
-                params=VADParams(confidence=0.58, start_secs=0.1, stop_secs=0.32, min_volume=0.32),
+                params=VADParams(confidence=0.52, start_secs=0.08, stop_secs=0.34, min_volume=0.18),
             )
         )
         self.processor = HermesVoiceProcessor(
