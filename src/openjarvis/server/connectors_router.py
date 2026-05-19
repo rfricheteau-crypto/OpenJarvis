@@ -7,6 +7,11 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from fastapi import Request
+except ImportError:
+    Request = None  # type: ignore[assignment]
+
 # Module-level cache of connector instances (keyed by connector_id).
 _instances: Dict[str, Any] = {}
 
@@ -78,12 +83,11 @@ def create_connectors_router():
     this package.
     """
     try:
-        from fastapi import APIRouter, HTTPException, Request
+        from fastapi import APIRouter, HTTPException
     except ImportError as exc:
         raise ImportError(
             "fastapi and pydantic are required for the connectors router"
         ) from exc
-
     if ConnectRequest is None:
         raise ImportError("pydantic is required for the connectors router")
 
@@ -353,9 +357,9 @@ def create_connectors_router():
     @router.get("/{connector_id}/oauth/callback")
     async def oauth_callback(
         connector_id: str,
+        request: Request,
         code: str = "",
         error: str = "",
-        request: Request = None,
     ):
         """Handle OAuth callback from the provider."""
         from fastapi.responses import HTMLResponse

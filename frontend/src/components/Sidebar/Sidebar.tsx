@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import {
-  MessageSquare,
+  Sparkles,
   Plus,
   BarChart3,
   Settings,
@@ -9,30 +9,28 @@ import {
   PanelLeftClose,
   PanelLeft,
   Cpu,
-  Rocket,
-  Bot,
   Sun,
   Moon,
   Monitor,
   Loader2,
   ScrollText,
-  Database,
   RadioTower,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
+import { ModelSelectorModal } from '../ModelSelectorModal';
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const createConversation = useAppStore((s) => s.createConversation);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const serverInfo = useAppStore((s) => s.serverInfo);
-  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const modelLoading = useAppStore((s) => s.modelLoading);
 
   const settings = useAppStore((s) => s.settings);
@@ -53,14 +51,11 @@ export function Sidebar() {
   };
 
   const navItems = [
-    { path: '/', icon: MessageSquare, label: 'Chat' },
-    { path: '/jarvis-personal', icon: RadioTower, label: 'Jarvis Personal' },
-    { path: '/dashboard', icon: BarChart3, label: 'Dashboard' },
-    { path: '/data-sources', icon: Database, label: 'Data Sources' },
-    { path: '/agents', icon: Bot, label: 'Agents' },
-    { path: '/logs', icon: ScrollText, label: 'Logs' },
-    { path: '/settings', icon: Settings, label: 'Settings' },
-    { path: '/get-started', icon: Rocket, label: 'Get Started' },
+    { path: '/jarvis-personal', icon: Sparkles, label: 'Discussion avec Hermès' },
+    { path: '/jarvis-personal?mode=cockpit', icon: RadioTower, label: 'Ruth OS 360°' },
+    { path: '/dashboard', icon: BarChart3, label: 'Tableau de bord' },
+    { path: '/logs', icon: ScrollText, label: 'Journaux' },
+    { path: '/settings', icon: Settings, label: 'Parametres' },
   ];
 
   return (
@@ -110,7 +105,7 @@ export function Sidebar() {
                 style={{ color: 'var(--color-text-secondary)' }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                title={`Theme: ${settings.theme} (click for ${nextTheme})`}
+                title={`Theme: ${settings.theme} (clic pour ${nextTheme})`}
               >
                 <ThemeIcon size={16} />
               </button>
@@ -120,7 +115,7 @@ export function Sidebar() {
                 style={{ color: 'var(--color-text-secondary)' }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                title="New chat"
+                title="Nouveau chat"
               >
                 <Plus size={18} />
               </button>
@@ -129,7 +124,7 @@ export function Sidebar() {
 
           {/* Model badge */}
           <button
-            onClick={() => setCommandPaletteOpen(true)}
+            onClick={() => setModelSelectorOpen(true)}
             className="mx-3 mb-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors cursor-pointer"
             style={{
               background: 'var(--color-bg-secondary)',
@@ -146,11 +141,11 @@ export function Sidebar() {
             )}
             <div className="flex-1 min-w-0">
               <span className="truncate block text-left" style={{ color: 'var(--color-text)' }}>
-                {selectedModel || serverInfo?.model || 'Select model'}
+                {selectedModel || serverInfo?.model || 'Choisir un modele'}
               </span>
               {modelLoading && (
                 <span className="text-[10px] block text-left" style={{ color: 'var(--color-accent)' }}>
-                  Loading model...
+                  Chargement modele...
                 </span>
               )}
             </div>
@@ -159,7 +154,7 @@ export function Sidebar() {
                 className="text-[10px] px-1.5 py-0.5 rounded font-mono"
                 style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-tertiary)' }}
               >
-                ⌘K
+                IA
               </kbd>
             )}
           </button>
@@ -173,7 +168,7 @@ export function Sidebar() {
               <Search size={14} style={{ color: 'var(--color-text-tertiary)' }} />
               <input
                 type="text"
-                placeholder="Search chats..."
+                placeholder="Rechercher dans les chats..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="flex-1 bg-transparent outline-none text-sm"
@@ -190,7 +185,13 @@ export function Sidebar() {
           {/* Bottom nav */}
           <nav className="px-2 pb-3 pt-2 flex flex-col gap-0.5" style={{ borderTop: '1px solid var(--color-border)' }}>
             {navItems.map((item) => {
-              const isActive = location.pathname === item.path;
+              const isActive = (() => {
+                const [itemPathname, itemQuery] = item.path.split('#')[0].split('?');
+                if (location.pathname !== itemPathname) return false;
+                const currentMode = new URLSearchParams(location.search).get('mode');
+                const itemMode = itemQuery ? new URLSearchParams(itemQuery).get('mode') : null;
+                return currentMode === itemMode;
+              })();
               return (
                 <button
                   key={item.path}
@@ -226,6 +227,7 @@ export function Sidebar() {
           </nav>
         </div>
       </aside>
+      <ModelSelectorModal open={modelSelectorOpen} onClose={() => setModelSelectorOpen(false)} />
     </>
   );
 }

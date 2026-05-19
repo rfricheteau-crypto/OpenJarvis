@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
 
 dashboard_router = APIRouter()
+
+STATIC_INDEX = Path(__file__).parent / "static" / "index.html"
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 DASHBOARD_HTML = """\
 <!DOCTYPE html>
@@ -426,10 +435,10 @@ setInterval(refresh, 5000);
 """
 
 
-@dashboard_router.get("/dashboard", response_class=HTMLResponse)
+@dashboard_router.get("/dashboard")
 async def dashboard():
-    """Serve the savings dashboard page."""
-    return HTMLResponse(content=DASHBOARD_HTML)
+    """Serve the normal OpenJarvis cockpit UI."""
+    return FileResponse(STATIC_INDEX, headers=NO_CACHE_HEADERS)
 
 
 __all__ = ["dashboard_router"]

@@ -1,21 +1,32 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { Routes, Route } from 'react-router';
-import { useLocation } from 'react-router';
+import { Suspense, lazy, useEffect, useState, useCallback, useRef } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router';
 import { Layout } from './components/Layout';
 import { ChatPage } from './pages/ChatPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { GetStartedPage } from './pages/GetStartedPage';
-import { AgentsPage } from './pages/AgentsPage';
-import { DataSourcesPage } from './pages/DataSourcesPage';
-import { LogsPage } from './pages/LogsPage';
-import { JarvisPersonalPage } from './pages/JarvisPersonalPage';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
 import { Toaster } from './components/ui/sonner';
 import { useAppStore } from './lib/store';
 import { fetchModels, fetchServerInfo, fetchSavings, submitSavings, isTauri } from './lib/api';
 import { OptInModal } from './components/OptInModal';
+
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const GetStartedPage = lazy(() => import('./pages/GetStartedPage').then((m) => ({ default: m.GetStartedPage })));
+const AgentsPage = lazy(() => import('./pages/AgentsPage').then((m) => ({ default: m.AgentsPage })));
+const DataSourcesPage = lazy(() => import('./pages/DataSourcesPage').then((m) => ({ default: m.DataSourcesPage })));
+const LogsPage = lazy(() => import('./pages/LogsPage').then((m) => ({ default: m.LogsPage })));
+const JarvisPersonalPage = lazy(() => import('./pages/JarvisPersonalPage').then((m) => ({ default: m.JarvisPersonalPage })));
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then((m) => ({ default: m.ProjectDetailPage })));
+const HermesChatPage = lazy(() => import('./pages/HermesChatPage').then((m) => ({ default: m.HermesChatPage })));
+function RouteFallback() {
+  return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="hud-panel px-6 py-5" style={{ color: 'var(--color-text)' }}>
+        Chargement…
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const location = useLocation();
@@ -62,7 +73,7 @@ export default function App() {
 
   // Fetch models on mount
   useEffect(() => {
-    if (isPersonalCockpit || modelsLoadedRef.current) return;
+    if (modelsLoadedRef.current) return;
     fetchModels()
       .then((m) => {
         modelsLoadedRef.current = true;
@@ -75,7 +86,7 @@ export default function App() {
 
   // Fetch server info
   useEffect(() => {
-    if (isPersonalCockpit || serverInfoLoadedRef.current) return;
+    if (serverInfoLoadedRef.current) return;
     serverInfoLoadedRef.current = true;
     fetchServerInfo().then(setServerInfo).catch(() => {});
   }, [isPersonalCockpit]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -180,18 +191,23 @@ export default function App() {
 
   return (
     <>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<ChatPage />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="jarvis-personal" element={<JarvisPersonalPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="get-started" element={<GetStartedPage />} />
-          <Route path="data-sources" element={<DataSourcesPage />} />
-          <Route path="agents" element={<AgentsPage />} />
-          <Route path="logs" element={<LogsPage />} />
-        </Route>
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<ChatPage />} />
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="jarvis-personal" element={<JarvisPersonalPage />} />
+            <Route path="jarvis-personal/chat" element={<Navigate to="/jarvis-personal" replace />} />
+            <Route path="hermes-chat" element={<HermesChatPage />} />
+            <Route path="jarvis-personal/project/:id" element={<ProjectDetailPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="get-started" element={<GetStartedPage />} />
+            <Route path="data-sources" element={<DataSourcesPage />} />
+            <Route path="agents" element={<AgentsPage />} />
+            <Route path="logs" element={<LogsPage />} />
+          </Route>
+        </Routes>
+      </Suspense>
       <Toaster position="bottom-right" />
       {commandPaletteOpen && <CommandPalette />}
       {optInModalOpen && (

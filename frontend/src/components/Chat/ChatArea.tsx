@@ -14,7 +14,15 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-export function ChatArea() {
+export function ChatArea({
+  title,
+  subtitle,
+  forceInputFocus = false,
+}: {
+  title?: string;
+  subtitle?: string;
+  forceInputFocus?: boolean;
+}) {
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const systemPanelOpen = useAppStore((s) => s.systemPanelOpen);
@@ -106,10 +114,10 @@ export function ChatArea() {
               <Sparkles size={24} />
             </div>
             <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
-              {getGreeting()}
+              {title || getGreeting()}
             </h2>
             <p className="text-sm text-center max-w-sm mb-6" style={{ color: 'var(--color-text-secondary)' }}>
-              Ask anything. Your AI runs locally — private, fast, and always available.
+              {subtitle || 'Ask anything. Your AI runs locally — private, fast, and always available.'}
             </p>
 
             {/* Quick action hints */}
@@ -157,7 +165,10 @@ export function ChatArea() {
           </div>
         )}
       </div>
-      <InputArea />
+      <InputArea
+        placeholder={title ? 'Bonjour Hermès' : 'Message OpenJarvis...'}
+        forceFocus={forceInputFocus}
+      />
     </div>
   );
 }

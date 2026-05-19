@@ -22,28 +22,28 @@ TOKEN_COUNTING_VERSION: int = 2
 # ---------------------------------------------------------------------------
 
 CLOUD_PRICING: Dict[str, Dict[str, float]] = {
-    "gpt-5.3": {
-        "input_per_1m": 2.00,
+    "gpt-4o": {
+        "input_per_1m": 2.50,
         "output_per_1m": 10.00,
-        "label": "GPT-5.3",
+        "label": "GPT-4o",
         "provider": "OpenAI",
         "params_b": 200.0,
         "energy_wh_per_1k_tokens": 0.4,
         "flops_per_token": 3.0e12,
     },
     "claude-opus-4.6": {
-        "input_per_1m": 5.00,
-        "output_per_1m": 25.00,
+        "input_per_1m": 15.00,
+        "output_per_1m": 75.00,
         "label": "Claude Opus 4.6",
         "provider": "Anthropic",
         "params_b": 137.0,
         "energy_wh_per_1k_tokens": 0.5,
         "flops_per_token": 4.0e12,
     },
-    "gemini-3.1-pro": {
-        "input_per_1m": 2.00,
-        "output_per_1m": 12.00,
-        "label": "Gemini 3.1 Pro",
+    "gemini-2.5-pro": {
+        "input_per_1m": 1.25,
+        "output_per_1m": 10.00,
+        "label": "Gemini 2.5 Pro",
         "provider": "Google",
         "params_b": 137.0,
         "energy_wh_per_1k_tokens": 0.35,

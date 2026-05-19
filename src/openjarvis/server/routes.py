@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -14,6 +16,7 @@ from openjarvis.server.models import (
     ChatCompletionChunk,
     ChatCompletionRequest,
     ChatCompletionResponse,
+    CloudKeysUpdateRequest,
     Choice,
     ChoiceMessage,
     ComplexityInfo,
@@ -25,6 +28,14 @@ from openjarvis.server.models import (
 )
 
 router = APIRouter()
+_CLOUD_KEYS_FILE = Path.home() / ".openjarvis" / "cloud-keys.env"
+_ALLOWED_CLOUD_KEYS = {
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+}
 
 
 def _to_messages(chat_messages) -> list[Message]:
@@ -41,6 +52,133 @@ def _to_messages(chat_messages) -> list[Message]:
             )
         )
     return messages
+
+
+def _read_cloud_keys_file() -> tuple[list[str], dict[str, str]]:
+    lines: list[str] = []
+    values: dict[str, str] = {}
+    if _CLOUD_KEYS_FILE.exists():
+        raw_lines = _CLOUD_KEYS_FILE.read_text(encoding="utf-8").splitlines()
+        lines = list(raw_lines)
+        for raw in raw_lines:
+            line = raw.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key in _ALLOWED_CLOUD_KEYS:
+                    values[key] = value.strip()
+    return lines, values
+
+
+def _write_cloud_keys_file(updates: dict[str, str]) -> dict[str, bool]:
+    original_lines, current = _read_cloud_keys_file()
+    for key, value in updates.items():
+        if "\n" in value or "\r" in value:
+            raise HTTPException(status_code=400, detail=f"Valeur invalide pour {key}")
+        stripped = value.strip()
+        if stripped:
+            current[key] = stripped
+        else:
+            current.pop(key, None)
+
+    kept_other_lines: list[str] = []
+    for raw in original_lines:
+        line = raw.strip()
+        if not line:
+            kept_other_lines.append(raw)
+            continue
+        if line.startswith("#"):
+            kept_other_lines.append(raw)
+            continue
+        if "=" in line:
+            key = line.split("=", 1)[0].strip()
+            if key in _ALLOWED_CLOUD_KEYS:
+                continue
+        kept_other_lines.append(raw)
+
+    output_lines = [line for line in kept_other_lines if line.strip() or line == ""]
+    if output_lines and output_lines[-1].strip():
+        output_lines.append("")
+    for key in sorted(current):
+        output_lines.append(f"{key}={current[key]}")
+
+    _CLOUD_KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CLOUD_KEYS_FILE.write_text("\n".join(output_lines).rstrip() + "\n", encoding="utf-8")
+    os.chmod(_CLOUD_KEYS_FILE, 0o600)
+    return {key: key in current for key in sorted(_ALLOWED_CLOUD_KEYS)}
+
+
+def _reload_cloud_env() -> dict[str, bool]:
+    _, current = _read_cloud_keys_file()
+    for key in _ALLOWED_CLOUD_KEYS:
+        if key in current:
+            os.environ[key] = current[key]
+        else:
+            os.environ.pop(key, None)
+    return {key: key in current for key in sorted(_ALLOWED_CLOUD_KEYS)}
+
+
+def _reload_cloud_engine_state(request: Request) -> dict[str, str]:
+    try:
+        from openjarvis.engine.cloud import CloudEngine
+        from openjarvis.engine.multi import MultiEngine
+
+        cloud = CloudEngine()
+        if not cloud.health():
+            return {
+                "status": "no_cloud",
+                "message": "No cloud models available (check API keys)",
+            }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+    outer = request.app.state.engine
+    inner = getattr(outer, "_inner", outer)
+
+    if isinstance(inner, MultiEngine):
+        new_engines = [(k, e) for k, e in inner._engines if k != "cloud"]
+        new_engines.append(("cloud", cloud))
+        inner._engines = new_engines
+        inner._refresh_map()
+    else:
+        engine_name = getattr(request.app.state, "engine_name", "local")
+        new_multi = MultiEngine([(engine_name, inner), ("cloud", cloud)])
+        if hasattr(outer, "_inner"):
+            outer._inner = new_multi
+        else:
+            request.app.state.engine = new_multi
+        request.app.state.engine_name = "multi"
+
+    return {"status": "ok", "message": "Cloud engine reloaded"}
+
+
+@router.get("/v1/cloud/keys/status")
+async def cloud_keys_status():
+    """Return actual backend cloud-key availability from ~/.openjarvis/cloud-keys.env + env."""
+    _, file_values = _read_cloud_keys_file()
+    status: dict[str, bool] = {}
+    for key in sorted(_ALLOWED_CLOUD_KEYS):
+        status[key] = bool(file_values.get(key) or os.environ.get(key))
+    return {"path": str(_CLOUD_KEYS_FILE), "status": status}
+
+
+@router.post("/v1/cloud/keys")
+async def save_cloud_keys(payload: CloudKeysUpdateRequest, request: Request):
+    """Persist cloud keys to ~/.openjarvis/cloud-keys.env and hot-reload process env."""
+    updates = payload.model_dump(exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="JSON object attendu")
+
+    status = _write_cloud_keys_file(updates)
+    live_status = _reload_cloud_env()
+    reload_result = _reload_cloud_engine_state(request)
+    return {
+        **reload_result,
+        "saved": sorted(updates.keys()),
+        "key_status": status,
+        "configured_keys": [key for key, present in live_status.items() if present],
+        "path": str(_CLOUD_KEYS_FILE),
+    }
 
 
 @router.post("/v1/chat/completions")
@@ -546,51 +684,12 @@ async def reload_cloud_engine(request: Request):
     import os
     from pathlib import Path
 
-    # Re-read ~/.openjarvis/cloud-keys.env and update the running process env.
-    keys_path = Path.home() / ".openjarvis" / "cloud-keys.env"
-    if keys_path.exists():
-        for raw_line in keys_path.read_text().splitlines():
-            line = raw_line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ[k.strip()] = v.strip()
-
-    # Try to build a fresh CloudEngine.
-    try:
-        from openjarvis.engine.cloud import CloudEngine
-        from openjarvis.engine.multi import MultiEngine
-
-        cloud = CloudEngine()
-        if not cloud.health():
-            return {
-                "status": "no_cloud",
-                "message": "No cloud models available (check API keys)",
-            }
-    except Exception as exc:
-        return {"status": "error", "message": str(exc)}
-
-    # Locate the innermost engine, working through InstrumentedEngine layers.
-    outer = request.app.state.engine
-    inner = getattr(outer, "_inner", outer)
-
-    if isinstance(inner, MultiEngine):
-        # Replace or insert the cloud entry in the existing MultiEngine.
-        new_engines = [(k, e) for k, e in inner._engines if k != "cloud"]
-        new_engines.append(("cloud", cloud))
-        inner._engines = new_engines
-        inner._refresh_map()
-    else:
-        # Wrap the existing engine (which may be security-wrapped) with a new
-        # MultiEngine that includes the cloud engine.
-        engine_name = getattr(request.app.state, "engine_name", "local")
-        new_multi = MultiEngine([(engine_name, inner), ("cloud", cloud)])
-        if hasattr(outer, "_inner"):
-            outer._inner = new_multi
-        else:
-            request.app.state.engine = new_multi
-        request.app.state.engine_name = "multi"
-
-    return {"status": "ok", "message": "Cloud engine reloaded"}
+    live_status = _reload_cloud_env()
+    reload_result = _reload_cloud_engine_state(request)
+    return {
+        **reload_result,
+        "configured_keys": [key for key, present in live_status.items() if present],
+    }
 
 
 @router.get("/v1/savings")

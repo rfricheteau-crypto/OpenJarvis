@@ -77,6 +77,39 @@ uv run jarvis ask "What is the capital of France?"
 
 `jarvis init` auto-detects your hardware and recommends the best engine. Run `uv run jarvis doctor` at any time to diagnose issues.
 
+## Local Backend Development
+
+The API backend is a FastAPI/ASGI app. The production-style command remains:
+
+```bash
+uv run jarvis serve --host 127.0.0.1 --port 8000
+```
+
+For local backend work, use the auto-reload dev server:
+
+```bash
+scripts/dev-server.sh
+```
+
+It runs:
+
+```bash
+uv run uvicorn openjarvis.server.dev_app:create_dev_app --factory --host 127.0.0.1 --port 8000 --reload --reload-dir src/openjarvis
+```
+
+If port `8000` is already in use, stop the existing server once or use another port:
+
+```bash
+PORT=8001 scripts/dev-server.sh
+```
+
+The dev factory uses the same FastAPI routes as `jarvis serve`, but avoids starting channel bridges and schedulers on each reload. Check it with:
+
+```bash
+curl -i http://127.0.0.1:8000/health
+curl -i http://127.0.0.1:8000/v1/personal-cockpit
+```
+
 ## Starter Configs
 
 Install any preset with one command:

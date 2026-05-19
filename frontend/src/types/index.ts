@@ -137,10 +137,135 @@ export interface PersonalCockpitRecord {
   [key: string]: unknown;
 }
 
+export interface ObsidianActionItem {
+  id: string;
+  title: string;
+  project: string;
+  category: 'idea' | 'task' | 'note' | 'decision' | 'urgency' | 'document';
+  priority: 'urgent' | 'high' | 'medium' | 'low';
+  status: 'pending' | 'in_progress' | 'done' | 'blocked';
+  source_type: 'obsidian' | 'manual' | 'hermes' | 'n8n';
+  source_path: string;
+  action_requested: string;
+  owner: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ObsidianActionInboxSource {
+  mode: 'real' | 'fallback_json' | 'mock';
+  label: string;
+  detail?: string;
+  updated_at?: string;
+  error?: string;
+  sources?: Array<{
+    label?: string;
+    path: string;
+    exists: boolean;
+  }>;
+}
+
 export interface PersonalCockpitFileHealth {
   exists: boolean;
   path: string;
   modified_at: string;
+}
+
+export interface PersonalCockpitHermesAction {
+  label?: string;
+  why?: string;
+  [key: string]: unknown;
+}
+
+export interface PersonalCockpitHermesRiskGuard extends PersonalCockpitRecord {
+  overall_risk_level?: string;
+  allowed?: boolean;
+  approval_required?: boolean;
+  recommended_response?: string;
+}
+
+export interface PersonalCockpitHermesSessionCloser extends PersonalCockpitRecord {
+  summary?: string;
+  next_step?: string;
+}
+
+export interface PersonalCockpitHermesProjectRoute extends PersonalCockpitRecord {
+  request?: string;
+  categories?: string[];
+  work_type?: string;
+  graphify_required?: boolean;
+  obsidian_continuity_check?: boolean;
+  next_safe_step?: string;
+}
+
+export interface PersonalCockpitHermesOrchestratorTrace extends PersonalCockpitRecord {
+  timestamp?: string;
+  step?: string;
+  tool?: string;
+  decision?: string;
+  status?: string;
+  summary?: string;
+}
+
+export interface PersonalCockpitHermesToolResearch extends PersonalCockpitRecord {
+  required?: boolean;
+  status?: string;
+  reason?: string;
+  cache_key?: string;
+  task?: string;
+  domain?: string;
+  work_type?: string;
+  recommended_tool?: string;
+  fallback_tool?: string;
+  free_alternative?: string;
+  paid_alternative?: string;
+  recommended_next_step?: string;
+  cost_level?: string;
+  candidate_tools?: string[];
+  signals?: string[];
+  last_checked_at?: string;
+  options_count?: number;
+}
+
+export interface PersonalCockpitHermesOrchestrator extends PersonalCockpitRecord {
+  current_request?: PersonalCockpitRecord | null;
+  current_packet?: PersonalCockpitRecord | null;
+  current_tool_decision?: PersonalCockpitRecord | null;
+  current_tool_research?: PersonalCockpitRecord | null;
+  recent_trace?: PersonalCockpitHermesOrchestratorTrace[];
+}
+
+export interface PersonalCockpitHermesDelegation extends PersonalCockpitRecord {
+  delegation_status?: string;
+  validation_status?: string;
+  delegation_target?: string;
+  handoff_summary?: string;
+  packet_ready?: boolean;
+  tool_resolution_mode?: string;
+  tool_resolution_cost?: string;
+  tool_fallback?: string;
+  tool_validation_gate?: string;
+  result_status?: string;
+  result_summary?: string;
+  result_logged_at?: string;
+  lifecycle_status?: string;
+}
+
+export interface PersonalCockpitPrioritySummary {
+  primary?: string;
+  secondary?: string[];
+  pending_validation?: boolean;
+  source?: string;
+}
+
+export interface PersonalCockpitAttentionItem {
+  level: string;
+  title: string;
+  detail: string;
+}
+
+export interface PersonalCockpitSignal extends PersonalCockpitRecord {
+  status?: string;
 }
 
 export interface PersonalCockpitSnapshot {
@@ -161,6 +286,9 @@ export interface PersonalCockpitSnapshot {
     last_response: string;
     pending_validation?: PersonalCockpitRecord | null;
     last_validated_action?: PersonalCockpitRecord | null;
+    active_intent?: string;
+    last_recommended_action?: string;
+    last_skill_run?: PersonalCockpitRecord | null;
   };
   voice_live: {
     config_status: string;
@@ -174,6 +302,22 @@ export interface PersonalCockpitSnapshot {
   latest_transcription: string;
   latest_response: string;
   pending_validation?: PersonalCockpitRecord | null;
+  pending_validations?: Array<{
+    id: string;
+    project: string;
+    title: string;
+    source: string;
+    why_pending: string;
+    expected_action: string;
+    owner: string;
+    status: string;
+    priority: string;
+    updated_at: string;
+  }>;
+  pending_validations_count?: number;
+  obsidian_action_inbox?: ObsidianActionItem[];
+  obsidian_action_inbox_count?: number;
+  obsidian_action_inbox_source?: ObsidianActionInboxSource;
   last_live_brief?: PersonalCockpitRecord | null;
   yahoo_targeted_move?: PersonalCockpitRecord | null;
   yahoo_dynamic_candidate?: PersonalCockpitRecord | null;
@@ -190,18 +334,140 @@ export interface PersonalCockpitSnapshot {
     status: string;
     services: Record<string, string>;
     updated_at: string;
+    stale_seconds?: number | null;
+    attention_needed?: boolean;
+    summary?: string;
     details: PersonalCockpitRecord;
   }>;
+  priorities?: PersonalCockpitPrioritySummary;
+  attention_now?: PersonalCockpitAttentionItem[];
+  signals?: {
+    hermes?: PersonalCockpitSignal;
+    voice?: PersonalCockpitSignal;
+    yahoo?: PersonalCockpitSignal;
+  };
+  connectors_overview?: {
+    healthy: string[];
+    attention: string[];
+    offline: string[];
+  };
   alerts: Array<{
     level: string;
     title: string;
     detail: string;
   }>;
+  priority_lane?: {
+    headline: string;
+    detail: string;
+    source: string;
+    severity: string;
+    target_id: string;
+  };
   continuity: Array<{
     heading: string;
     summary: string;
   }>;
+  hermes?: {
+    overall?: string;
+    active_intent?: string;
+    last_summary?: string;
+    last_recommended_action?: string;
+    last_skill_run?: PersonalCockpitRecord | null;
+    next_actions?: Array<PersonalCockpitHermesAction>;
+    risk_guard?: PersonalCockpitHermesRiskGuard | null;
+    session_closer?: PersonalCockpitHermesSessionCloser | null;
+    project_route?: PersonalCockpitHermesProjectRoute | null;
+    orchestrator?: PersonalCockpitHermesOrchestrator | null;
+    delegation?: PersonalCockpitHermesDelegation | null;
+    tool_research?: PersonalCockpitHermesToolResearch | null;
+    chat_runtime?: HermesChatRuntime | null;
+    status_summary?: PersonalCockpitRecord | null;
+    priority_summary?: PersonalCockpitPrioritySummary | null;
+  };
   file_health: Record<string, PersonalCockpitFileHealth>;
+}
+
+export interface PersonalCockpitChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface HermesBudgetSummary {
+  openai_enabled: boolean;
+  budget_month_usd: number;
+  estimated_today_usd: number;
+  estimated_month_usd: number;
+  budget_remaining_usd: number;
+  estimated_usage_ratio: number;
+  daily_message_count: number;
+  daily_message_limit: number;
+  blocked: boolean;
+  threshold_ratio: number;
+  threshold_message: string;
+  configured_provider_count?: number;
+  providers?: Array<{
+    id: string;
+    label: string;
+    kind: string;
+    configured: boolean;
+    estimated_today_usd: number;
+    estimated_month_usd: number;
+    last_model?: string;
+    last_used_at?: string;
+  }>;
+  warning_level: string;
+  updated_at: string;
+}
+
+export interface HermesChatRuntime {
+  recommended_engine: string;
+  preferred_provider?: string;
+  openai_enabled: boolean;
+  openai_configured: boolean;
+  openrouter_enabled: boolean;
+  openrouter_configured: boolean;
+  openai_model: string;
+  openrouter_economy_model: string;
+  openrouter_quality_model: string;
+  openrouter_code_model: string;
+  local_model: string;
+  max_tokens_per_reply: number;
+  daily_message_limit: number;
+  budget: HermesBudgetSummary;
+  status: string;
+  status_message: string;
+  selection_reason?: string;
+  personalization?: {
+    summary_lines: string[];
+    profile: string[];
+    preferences: string[];
+    rules: string[];
+    validated_memory: string[];
+    learning_journal: string[];
+    sources: Array<{
+      label: string;
+      path: string;
+      exists: boolean;
+    }>;
+  };
+  available_modes?: string[];
+}
+
+export interface PersonalCockpitChatResponse {
+  reply: string;
+  engine: string;
+  provider?: string;
+  mode: string;
+  model: string;
+  selection_reason?: string;
+  used_memory: boolean;
+  source: string;
+  warning?: string;
+  fallback_used?: boolean;
+  budget?: HermesBudgetSummary;
+  usage?: TokenUsage;
+  estimated_cost_usd?: number;
+  local_limited?: boolean;
 }
 
 // --- Log Types ---

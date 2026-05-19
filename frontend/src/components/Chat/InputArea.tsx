@@ -7,7 +7,13 @@ import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
 import type { ChatMessage, ToolCallInfo, TokenUsage, MessageTelemetry } from '../../types';
 
-export function InputArea() {
+export function InputArea({
+  placeholder = 'Message OpenJarvis...',
+  forceFocus = false,
+}: {
+  placeholder?: string;
+  forceFocus?: boolean;
+}) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -73,6 +79,12 @@ export function InputArea() {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input]);
+
+  useEffect(() => {
+    if (!forceFocus) return;
+    const timer = window.setTimeout(() => textareaRef.current?.focus(), 180);
+    return () => window.clearTimeout(timer);
+  }, [forceFocus]);
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
@@ -313,8 +325,24 @@ export function InputArea() {
     }
   };
 
+  const chatReady = Boolean(selectedModel) && !modelLoading;
+
   return (
     <div className="px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
+      {!chatReady && (
+        <div
+          className="mb-3 rounded-2xl px-4 py-3 text-sm"
+          style={{
+            background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--color-warning) 26%, transparent)',
+            color: 'var(--color-text)',
+          }}
+        >
+          {modelLoading
+            ? 'Hermès charge encore le modèle IA local…'
+            : "Hermès n'est pas encore connecté au modèle IA. Vérifie que le backend local et les modèles sont bien disponibles."}
+        </div>
+      )}
       <div
         className="flex items-center gap-2 rounded-2xl px-4 py-3 transition-shadow"
         style={{
@@ -328,11 +356,11 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message OpenJarvis..."
+          placeholder={placeholder}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
-          disabled={streamState.isStreaming || modelLoading}
+          disabled={streamState.isStreaming || !chatReady}
         />
         {streamState.isStreaming ? (
           <button
@@ -353,7 +381,7 @@ export function InputArea() {
             />
             <button
               onClick={sendMessage}
-              disabled={!input.trim() || modelLoading}
+              disabled={!input.trim() || !chatReady}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
                 background: input.trim() ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',

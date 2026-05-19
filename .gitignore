@@ -62,6 +62,9 @@ frontend/node_modules/
 frontend/dist/
 src/openjarvis/server/static/
 
+# Graphify generated outputs
+**/.graphify/
+
 # Desktop (Tauri)
 frontend/src-tauri/target/
 

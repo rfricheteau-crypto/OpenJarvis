@@ -1,4 +1,11 @@
-import type { ModelInfo, PersonalCockpitSnapshot, SavingsData, ServerInfo } from '../types';
+import type {
+  ModelInfo,
+  PersonalCockpitChatMessage,
+  PersonalCockpitChatResponse,
+  PersonalCockpitSnapshot,
+  SavingsData,
+  ServerInfo,
+} from '../types';
 
 // ---------------------------------------------------------------------------
 // Supabase config — safe to embed (RLS protects writes)
@@ -228,6 +235,274 @@ export async function fetchPersonalCockpit(): Promise<PersonalCockpitSnapshot> {
   return res.json();
 }
 
+export type HermesValidationDecision = 'approve' | 'reject';
+
+export interface HermesValidationResponse {
+  ok: boolean;
+  decision: HermesValidationDecision;
+  executed: boolean;
+  execution_status: string;
+  message: string;
+  warning?: string;
+}
+
+export async function submitHermesValidation(
+  decision: HermesValidationDecision,
+  note: string = '',
+): Promise<HermesValidationResponse> {
+  const res = await fetch(`${getBase()}/api/hermes/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, note }),
+  });
+  if (!res.ok) throw new Error(`Failed to submit Hermès validation: ${res.status}`);
+  return res.json();
+}
+
+export type HermesAlertAction = 'fix' | 'create_task' | 'ignore';
+
+export interface HermesAlertActionResponse {
+  ok: boolean;
+  connected: boolean;
+  executed: boolean;
+  status: string;
+  action: HermesAlertAction;
+  message: string;
+  recorded_at: string;
+}
+
+export async function submitHermesAlertAction(
+  action: HermesAlertAction,
+  payload: {
+    alert_title: string;
+    alert_detail?: string;
+    alert_level?: string;
+    source?: string;
+  },
+): Promise<HermesAlertActionResponse> {
+  const res = await fetch(`${getBase()}/api/hermes/alerts/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action,
+      alert_title: payload.alert_title,
+      alert_detail: payload.alert_detail || '',
+      alert_level: payload.alert_level || 'warning',
+      source: payload.source || 'cockpit',
+    }),
+  });
+  if (!res.ok) throw new Error(`Failed to submit Hermès alert action: ${res.status}`);
+  return res.json();
+}
+
+export interface ObsidianIdeaItem {
+  id: string;
+  text: string;
+  tag: string;
+  done: boolean;
+  section: string;
+  obsidian_path: string;
+}
+
+export async function fetchIdeas(): Promise<ObsidianIdeaItem[]> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/ideas`);
+  if (!res.ok) throw new Error(`Failed to fetch ideas: ${res.status}`);
+  return res.json();
+}
+
+export async function createIdea(
+  text: string,
+  tag: string,
+  date: string,
+): Promise<{ obsidian_path: string; section: string; ok: boolean }> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/ideas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, tag, date }),
+  });
+  if (!res.ok) throw new Error(`Failed to create idea: ${res.status}`);
+  return res.json();
+}
+
+export interface AdvSnapshot {
+  generated_at?: string;
+  _age_seconds?: number;
+  _stale?: boolean;
+  _empty?: boolean;
+  business?: { mrr?: number; arr?: number; ca_mensuel?: number; ca_annuel?: number; ca_total?: number; revenus_abonnements?: number; revenus_credits?: number };
+  abonnements?: { actifs?: number; starter?: number; pro?: number; premium?: number; mensuel?: number; annuel?: number; essais_actifs?: number; churn_rate?: number; annulations?: number; conversions_essai_payant?: number };
+  utilisateurs?: { total?: number; actifs_30j?: number; nouveaux_semaine?: number; payants?: number; essai?: number; inactifs?: number };
+  usage?: { devis_total?: number; factures_total?: number; docs_semaine?: number; docs_mois?: number; echecs_vocal?: number; echecs_pdf?: number; echecs_email?: number };
+  sante_technique?: { services?: Record<string, string>; dernier_incident?: string | null; erreurs_worker_24h?: number };
+  lancement?: { taches_restantes?: number; blocages_critiques?: string[]; dernier_commit?: string | null };
+  marketing?: { prospects?: number; leads?: number; contenus_publies?: number };
+  objectifs_ruth?: { objectif_mrr_1?: number; objectif_mrr_2?: number; mrr_actuel?: number; progression_pct?: number };
+}
+
+export async function fetchAdvSnapshot(): Promise<AdvSnapshot> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/adv-snapshot`);
+  if (!res.ok) throw new Error(`Failed to fetch ADV snapshot: ${res.status}`);
+  return res.json();
+}
+
+export interface AdvObsidian {
+  adv_state?: string;
+  adv_state_path?: string;
+  codex_current_state?: string;
+  codex_current_state_path?: string;
+  juridique?: string;
+  juridique_path?: string;
+  codex_log?: string;
+  codex_log_path?: string;
+}
+
+export async function fetchAdvObsidian(): Promise<AdvObsidian> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/adv-obsidian`);
+  if (!res.ok) throw new Error(`Failed to fetch ADV Obsidian: ${res.status}`);
+  return res.json();
+}
+
+export interface HermesTraceEntry {
+  event_type: string;
+  status: string;
+  tool: string;
+  notes: string;
+}
+
+export interface HermesTrace {
+  entries: HermesTraceEntry[];
+  updated_at: string;
+  count: number;
+}
+
+export async function fetchHermesTrace(): Promise<HermesTrace> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes-trace`);
+  if (!res.ok) throw new Error(`Failed to fetch Hermès trace: ${res.status}`);
+  return res.json();
+}
+
+export async function toggleIdea(
+  text: string,
+  section: string,
+  done: boolean,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/ideas`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, section, done }),
+  });
+  if (!res.ok) throw new Error(`Failed to toggle idea: ${res.status}`);
+  return res.json();
+}
+
+export async function sendPersonalCockpitChat(
+  message: string,
+  history: PersonalCockpitChatMessage[],
+  engineMode: 'auto' | 'economy' | 'quality' | 'local' | 'openai' = 'auto',
+  sessionId?: string,
+): Promise<PersonalCockpitChatResponse> {
+  let openaiKey = '';
+  let openrouterKey = '';
+  try {
+    openaiKey = localStorage.getItem('openjarvis-openai-key') || '';
+    openrouterKey = localStorage.getItem('openjarvis-openrouter-key') || '';
+  } catch {}
+  const requestInit: RequestInit = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(openaiKey ? { 'X-Hermes-OpenAI-Key': openaiKey } : {}),
+      ...(openrouterKey ? { 'X-Hermes-OpenRouter-Key': openrouterKey } : {}),
+    },
+    body: JSON.stringify({
+      message,
+      history,
+      engine_mode: engineMode,
+      session_id: sessionId,
+    }),
+  };
+  let res: Response;
+  try {
+    res = await fetch(`${getBase()}/api/hermes/chat`, {
+      ...requestInit,
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch {
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    res = await fetch(`${getBase()}/api/hermes/chat`, {
+      ...requestInit,
+      signal: AbortSignal.timeout(45000),
+    });
+  }
+  if (!res.ok) {
+    throw new Error(`Failed to chat with Hermes: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface VoiceSpeakResponse {
+  ok: boolean;
+  request_id: string;
+  engine_requested: 'kokoro' | 'piper' | 'espeak';
+  engine_used: string;
+  audio_file: string;
+  audio_url: string;
+  elapsed_ms: number;
+  speed?: number;
+  warnings: string[];
+}
+
+export interface VoiceSpeakResolved extends VoiceSpeakResponse {
+  audio_url_abs: string;
+}
+
+export interface VoiceHealthResponse {
+  sidecar_available: boolean;
+  preferred_engine: 'kokoro';
+  fallback_available: boolean;
+  last_engine_used: 'kokoro' | 'piper' | 'espeak' | 'browser' | null;
+  last_error: string | null;
+  status: 'ready' | 'degraded' | 'unavailable';
+}
+
+export async function fetchVoiceHealth(): Promise<VoiceHealthResponse> {
+  const res = await fetch(`${getBase()}/api/voice/health`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!res.ok) throw new Error(`Voice health failed: ${res.status}`);
+  return res.json();
+}
+
+export async function speakWithLocalVoice(
+  text: string,
+  engine: 'kokoro' | 'piper' | 'espeak' = 'kokoro',
+  speed = 1.0,
+): Promise<VoiceSpeakResolved> {
+  const payload = {
+    text,
+    engine,
+    speed,
+  };
+  const res = await fetch(`${getBase()}/api/voice/speak`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(45000),
+  });
+  if (!res.ok) {
+    let detail = `Voice speak failed: ${res.status}`;
+    try {
+      const parsed = await res.json();
+      detail = String(parsed?.detail || detail);
+    } catch {}
+    throw new Error(detail);
+  }
+  const data = (await res.json()) as VoiceSpeakResponse;
+  const base = getBase();
+  const audio_url_abs = data.audio_url.startsWith('http') ? data.audio_url : `${base}${data.audio_url}`;
+  return { ...data, audio_url_abs };
+}
+
 export async function fetchTraces(limit: number = 50): Promise<unknown> {
   if (isTauri()) {
     try {
@@ -256,7 +531,11 @@ export interface SpeechHealth {
   reason?: string;
 }
 
-export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<TranscriptionResult> {
+export async function transcribeAudio(
+  audioBlob: Blob,
+  filename = 'recording.webm',
+  language = 'fr',
+): Promise<TranscriptionResult> {
   if (isTauri()) {
     try {
       const buffer = await audioBlob.arrayBuffer();
@@ -270,11 +549,52 @@ export async function transcribeAudio(audioBlob: Blob, filename = 'recording.web
   }
   const formData = new FormData();
   formData.append('file', audioBlob, filename);
-  const res = await fetch(`${getBase()}/v1/speech/transcribe`, {
-    method: 'POST',
-    body: formData,
-  });
-  if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
+  if (language) formData.append('language', language);
+
+  const fetchTranscription = async (timeoutMs: number): Promise<Response> => {
+    return fetch(`${getBase()}/v1/speech/transcribe`, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  };
+
+  const isAbortError = (err: unknown): boolean => {
+    const message = err instanceof Error ? err.message.toLowerCase() : '';
+    const name = err instanceof Error ? err.name.toLowerCase() : '';
+    return (
+      name.includes('abort') ||
+      name.includes('timeout') ||
+      message.includes('aborted') ||
+      message.includes('timeout')
+    );
+  };
+
+  let res: Response;
+  try {
+    res = await fetchTranscription(45000);
+  } catch (err) {
+    if (isAbortError(err)) {
+      try {
+        // One safe retry for local STT spikes (model warmup / CPU contention).
+        res = await fetchTranscription(90000);
+      } catch (retryErr) {
+        const retryMessage = retryErr instanceof Error ? retryErr.message : 'network error';
+        throw new Error(`Transcription failed: ${retryMessage}`);
+      }
+    } else {
+      const message = err instanceof Error ? err.message : 'network error';
+      throw new Error(`Transcription failed: ${message}`);
+    }
+  }
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const data = await res.json();
+      detail = typeof data?.detail === 'string' ? data.detail : '';
+    } catch {}
+    throw new Error(`Transcription failed: ${res.status}${detail ? ` (${detail})` : ''}`);
+  }
   return res.json();
 }
 
@@ -283,11 +603,46 @@ export async function fetchSpeechHealth(): Promise<SpeechHealth> {
     try {
       return await tauriInvoke<SpeechHealth>('speech_health');
     } catch {
-      return { available: false };
+      // Fall through to HTTP health endpoint in case the Tauri command is unavailable.
     }
   }
-  const res = await fetch(`${getBase()}/v1/speech/health`);
-  if (!res.ok) return { available: false };
+  try {
+    const res = await fetch(`${getBase()}/v1/speech/health`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { available: false, reason: `HTTP ${res.status}` };
+    return res.json();
+  } catch {
+    return { available: false, reason: 'Speech health request failed' };
+  }
+}
+
+export async function fetchCloudKeyStatus(): Promise<{
+  path: string;
+  status: Record<string, boolean>;
+}> {
+  const res = await fetch(`${getBase()}/v1/cloud/keys/status`);
+  if (!res.ok) throw new Error(`Cloud key status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function saveCloudKeys(payload: Record<string, string>): Promise<{
+  saved: string[];
+  status: Record<string, boolean>;
+  path: string;
+}> {
+  const res = await fetch(`${getBase()}/v1/cloud/keys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Cloud key save failed: ${res.status}`);
+  return res.json();
+}
+
+export async function reloadCloudKeys(): Promise<{ status: string; message: string }> {
+  const res = await fetch(`${getBase()}/v1/cloud/reload`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Cloud key reload failed: ${res.status}`);
   return res.json();
 }
 

@@ -13,11 +13,16 @@ from fastapi.staticfiles import StaticFiles
 from openjarvis.server.api_routes import include_all_routes
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
+from openjarvis.server.graphify_routes import router as graphify_router
 from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
-from openjarvis.server.personal_cockpit import router as personal_cockpit_router
+from openjarvis.server.personal_cockpit import (
+    hermes_chat_router,
+    router as personal_cockpit_router,
+)
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
+from openjarvis.server.voice_proxy_routes import router as voice_proxy_router
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +232,10 @@ def create_app(
     app.include_router(router)
     app.include_router(dashboard_router)
     app.include_router(comparison_router)
+    app.include_router(graphify_router)
     app.include_router(personal_cockpit_router)
+    app.include_router(hermes_chat_router)
+    app.include_router(voice_proxy_router)
     app.include_router(create_connectors_router())
     app.include_router(create_digest_router())
     app.include_router(upload_router)

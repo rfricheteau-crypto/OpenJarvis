@@ -30,6 +30,14 @@ class ChatCompletionRequest(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
 
 
+class CloudKeysUpdateRequest(BaseModel):
+    OPENAI_API_KEY: Optional[str] = None
+    OPENROUTER_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    GOOGLE_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
@@ -120,6 +128,7 @@ __all__ = [
     "ChatCompletionRequest",
     "ChatCompletionResponse",
     "ChatMessage",
+    "CloudKeysUpdateRequest",
     "Choice",
     "ChoiceMessage",
     "ComplexityInfo",

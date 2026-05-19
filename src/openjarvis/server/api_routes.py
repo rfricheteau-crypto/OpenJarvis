@@ -756,13 +756,28 @@ async def transcribe_speech(request: Request):
         raise HTTPException(status_code=400, detail="Missing 'file' field")
 
     audio_bytes = await audio_file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded audio is empty")
     language = form.get("language")
+    prompt = form.get("prompt")
 
     # Detect format from filename
     filename = getattr(audio_file, "filename", "audio.wav")
     ext = filename.rsplit(".", 1)[-1] if "." in filename else "wav"
 
-    result = backend.transcribe(audio_bytes, format=ext, language=language or None)
+    try:
+        result = backend.transcribe(
+            audio_bytes,
+            format=ext,
+            language=language or None,
+            prompt=prompt or None,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = f"Speech transcription failed: {exc}"
+        raise HTTPException(status_code=503, detail=detail) from exc
+
     return {
         "text": result.text,
         "language": result.language,
@@ -777,9 +792,14 @@ async def speech_health(request: Request):
     backend = getattr(request.app.state, "speech_backend", None)
     if backend is None:
         return {"available": False, "reason": "No speech backend configured"}
+    available = backend.health()
+    reason = getattr(backend, "last_error", None)
+    effective_compute_type = getattr(backend, "effective_compute_type", None)
     return {
-        "available": backend.health(),
+        "available": available,
         "backend": backend.backend_id,
+        "reason": reason,
+        "effective_compute_type": effective_compute_type,
     }
 
 

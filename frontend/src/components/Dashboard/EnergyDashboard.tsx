@@ -95,7 +95,7 @@ export function EnergyDashboard() {
         setTelemetry(telRes.value as TelemetryStats);
       }
     } catch {
-      setError('Cannot connect to server');
+      setError('Impossible de se connecter au serveur');
     }
   }, []);
 
@@ -106,20 +106,20 @@ export function EnergyDashboard() {
   }, [fetchData]);
 
   const thermalStatus = (energy?.avg_power_w ?? 0) < 50
-    ? { label: 'Cool', color: 'var(--color-success)' }
+    ? { label: 'Faible', color: 'var(--color-success)' }
     : (energy?.avg_power_w ?? 0) < 150
-    ? { label: 'Warm', color: 'var(--color-warning)' }
-    : { label: 'Hot', color: 'var(--color-error)' };
+    ? { label: 'Moderee', color: 'var(--color-warning)' }
+    : { label: 'Elevee', color: 'var(--color-error)' };
 
   if (error || !energy) {
     return (
       <div className="hud-panel p-6">
         <h3 className="hud-label flex items-center gap-2 mb-4">
           <Zap size={12} style={{ color: 'var(--color-accent)' }} />
-          Energy Monitoring
+          Suivi energie
         </h3>
         <div className="h-48 flex items-center justify-center text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-          <span className="hud-mono">{error || 'awaiting telemetry stream…'}</span>
+          <span className="hud-mono">{error || 'en attente du flux de telemetrie…'}</span>
         </div>
       </div>
     );
@@ -129,41 +129,41 @@ export function EnergyDashboard() {
     <div className="hud-panel p-6">
       <h3 className="hud-label flex items-center gap-2 mb-4">
         <Zap size={12} style={{ color: 'var(--color-accent)' }} />
-        Energy Monitoring
+        Suivi energie
       </h3>
 
       <div className="grid grid-cols-2 gap-3 mb-4">
         <StatCard
           icon={Zap}
-          label="Total Energy"
+          label="Energie totale"
           value={((energy.total_energy_j ?? 0) / 1000).toFixed(1)}
           unit="kJ"
         />
         <StatCard
           icon={Activity}
-          label="Energy / Token"
+          label="Energie / token"
           value={(energy.energy_per_token_j ?? 0).toFixed(3)}
           unit="J"
         />
         <StatCard
           icon={Thermometer}
-          label="Avg Power"
+          label="Puissance moy."
           value={(energy.avg_power_w ?? 0).toFixed(1)}
           unit="W"
         />
         <StatCard
           icon={Hash}
-          label="Total Requests"
+          label="Requetes"
           value={String(savings?.total_calls ?? telemetry?.total_requests ?? 0)}
         />
         <StatCard
           icon={Gauge}
-          label="Thermal"
+          label="Thermique"
           value={thermalStatus.label}
         />
         <StatCard
           icon={Hash}
-          label="Tokens Processed"
+          label="Tokens traites"
           value={formatNumber(savings?.total_tokens ?? telemetry?.total_tokens ?? 0)}
         />
       </div>
