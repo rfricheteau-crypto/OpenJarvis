@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Loader2, Mic, MicOff, RefreshCw, Send, Sparkles, Volume2, Waves } from 'lucide-react';
+import { ChevronDown, ExternalLink, Loader2, Mic, MicOff, RefreshCw, Send, Sparkles, Volume2, Waves } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
@@ -33,6 +33,7 @@ const HERMES_KOKORO_SPEED = 1.12;
 const CONTINUOUS_VAD_THRESHOLD_BIAS = 0.0035;
 const CONTINUOUS_NO_SPEECH_TIMEOUT_BOOST_MS = 4200;
 const CONTINUOUS_SILENCE_REDUCTION_MS = 80;
+const HERMES_V2_VOICE_URL = 'http://127.0.0.1:8790/web/';
 
 type Mode = 'hermes' | 'cockpit';
 type VoiceUiState = 'idle' | 'listening' | 'recording' | 'transcribing' | 'thinking' | 'speaking';
@@ -741,6 +742,12 @@ export function JarvisPersonalPage() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const openVoiceV2 = useCallback(() => {
+    speech.cancelRecording();
+    stopSpeaking({ silent: true });
+    window.open(HERMES_V2_VOICE_URL, '_blank', 'noopener,noreferrer');
+  }, [speech.cancelRecording, stopSpeaking]);
 
   const refreshVoiceHealth = useCallback(async () => {
     if (!localVoiceEnabled) {
@@ -1557,6 +1564,37 @@ export function JarvisPersonalPage() {
           <p className="text-sm md:text-base mb-5" style={{ color: '#a9bbdc' }}>
             Ruth parle à Jarvis, Jarvis passe par Hermès, et ouvre le cockpit seulement sur demande.
           </p>
+
+          <div
+            className="max-w-2xl mx-auto mb-5 rounded-2xl px-4 py-3 text-left"
+            style={{
+              border: '1px solid rgba(143, 192, 255, 0.28)',
+              background: 'linear-gradient(180deg, rgba(12, 24, 44, 0.84), rgba(8, 15, 28, 0.72))',
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.14em]" style={{ color: '#8ec7ff' }}>
+                  Voix recommandee
+                </div>
+                <div className="text-sm font-medium mt-1" style={{ color: '#eef5ff' }}>
+                  Utilise la Voix V2 isolee pour le vocal fluide valide.
+                </div>
+                <div className="text-xs mt-1" style={{ color: '#9cb7da' }}>
+                  Cette page reste utile pour le texte et le cockpit. La voix de reference est sur le proto V2.
+                </div>
+              </div>
+              <button
+                onClick={openVoiceV2}
+                className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold"
+                style={{ color: '#051226', background: '#8df0b4', boxShadow: '0 0 26px rgba(141, 240, 180, 0.18)' }}
+                title="Ouvrir la voix V2 recommandee"
+              >
+                <ExternalLink size={16} />
+                Ouvrir Voix V2
+              </button>
+            </div>
+          </div>
 
           <div className="flex flex-wrap items-center justify-center gap-3 mb-4">
             <button
