@@ -87,11 +87,33 @@ Test mobile réel (Playwright, viewport iPhone 390×844, 2026-08-29) : aucun scr
 
 Les deux tuiles lisent le snapshot existant ; aucune nouvelle source ni action créée. `tsc --noEmit` propre.
 
-**CE QUI MANQUE** : pages Projets et Personnel (2 tuiles encore inactives) ; contrôle navigateur mobile final sur le vrai téléphone de Ruth (bloqué par le réseau, voir `A_VALIDER_PAR_RUTH.md`) ; une vraie source de données pour « Personnel ».
+**CE QUI EXISTE (suite)** : « Projets » (Claude, 2026-08-29) ajoutée avec le
+même pattern (`?view=projets`), badge "décision requise" calculé en croisant
+avec `pending_validations`. Techniquement propre (`tsc` OK, testé réellement,
+0 erreur, pas de scroll horizontal). Commit `11e3892`.
 
-**RUTH_DECISION_REQUIRED** : aucune posée pour l'instant — dépend de si/quand Ruth veut avancer ce bloc.
+**PROBLÈME DE FOND TROUVÉ (pas un bug de ce soir, présent depuis la variante D)** :
+`model.projects` vient de `snapshot.continuity`, qui est le **journal de
+continuité interne de Hermès** (`_hermes_continuity() + handoffs`,
+`personal_cockpit.py:2309`) — session, routage, clôtures — **pas la liste des
+projets business de Ruth** (ADV, Pedro, EduPilot). La page "Projets" affiche
+donc des entrées comme "Hermès — Dernière clôture de session" au lieu de
+"ADV". Aucune source de données réelle pour de vrais projets n'existe encore
+dans le snapshot Hermès. Ne pas confondre avec le gap "Personnel" (source
+absente) — ici la source existe, mais c'est la mauvaise donnée.
 
-**PROCHAINE ACTION** : préparer la liste Projets à partir du contrat Project State, sans afficher de détails techniques au niveau 2. Personnel reste bloquée tant qu'aucune source de données réelle n'existe.
+**CE QUI MANQUE** : une vraie source "liste de projets business" (probablement
+à construire depuis `CORE/project-state/` que Codex développe côté
+CODEX_RUTH_OS, ou depuis `AGENT_HANDOFF.md`) ; page Personnel (aucune source
+du tout) ; contrôle navigateur mobile final sur le vrai téléphone de Ruth
+(bloqué par le réseau, voir `A_VALIDER_PAR_RUTH.md`).
+
+**RUTH_DECISION_REQUIRED** : aucune posée pour l'instant.
+
+**PROCHAINE ACTION** : ne pas construire Personnel tant qu'aucune source n'existe.
+Pour Projets, vérifier avec Codex si `CORE/project-state/` (en cours côté
+CODEX_RUTH_OS) peut devenir la vraie source avant de bricoler un contournement
+côté frontend.
 
 ---
 
