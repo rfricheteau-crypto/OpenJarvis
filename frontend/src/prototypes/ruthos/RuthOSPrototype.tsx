@@ -31,7 +31,7 @@ import { useAppStore } from '../../lib/store';
 import { STATUS_COLORS, priorityToStatus, type StatusKey } from './designSystem';
 
 type VariantKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
-type DetailKey = 'attente' | 'alertes';
+type DetailKey = 'attente' | 'alertes' | 'projets';
 
 type RuthOSPrototypeProps = {
   snapshot: PersonalCockpitSnapshot | null;
@@ -74,7 +74,7 @@ function currentVariant(): VariantKey {
 
 function currentDetail(): DetailKey | null {
   const value = new URLSearchParams(window.location.search).get('view');
-  return value === 'attente' || value === 'alertes' ? value : null;
+  return value === 'attente' || value === 'alertes' || value === 'projets' ? value : null;
 }
 
 function cleanText(value: string | undefined | null, fallback: string): string {
@@ -955,6 +955,77 @@ function AlertesDetail({
   );
 }
 
+function ProjetsDetail({
+  model,
+  snapshot,
+  onBack,
+}: {
+  model: ViewModel;
+  snapshot: PersonalCockpitSnapshot | null;
+  onBack: () => void;
+}) {
+  const rawValidations = snapshot?.pending_validations ?? [];
+
+  return (
+    <div className="ruth-variant-g">
+      <HomeSidebar />
+      <main className="g-main" id="ruth-main">
+        <div className="d-topbar">
+          <button type="button" className="d-ghost-btn" onClick={onBack}>
+            <ArrowLeft size={15} /> Retour à Hermès
+          </button>
+          <span className="d-status-line"><i className="d-dot d-dot-active" /> Données Hermès</span>
+        </div>
+
+        <section className="g-detail" aria-labelledby="projets-title">
+          <div className="g-detail-heading">
+            <span>Vue d’ensemble</span>
+            <h1 id="projets-title">Projets</h1>
+            <p>Résumé très court par projet — le détail complet reste au niveau 3, pas ici.</p>
+          </div>
+
+          {model.projects.length ? (
+            <div className="g-pending-list">
+              {model.projects.map((project, index) => {
+                const decision = rawValidations.find(
+                  (item) => (item.project || '').toLowerCase() === project.title.toLowerCase(),
+                );
+                return (
+                  <article className="g-pending-item" key={`${project.title}-${index}`}>
+                    <div className="g-pending-item-head">
+                      <div>
+                        <span className="g-pending-project">Projet</span>
+                        <h2>{project.title}</h2>
+                      </div>
+                      {decision ? (
+                        <StatusPill status={priorityToStatus(decision.priority)} label="décision requise" />
+                      ) : (
+                        <StatusPill status="active" label="rien de bloquant" />
+                      )}
+                    </div>
+                    <p>{cleanText(project.summary, 'État à actualiser.')}</p>
+                    {decision ? (
+                      <div className="g-pending-action">
+                        <span>Prochaine étape</span>
+                        <strong>{cleanText(decision.expected_action, decision.title)}</strong>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="g-empty-state">
+              <CheckCircle2 size={21} />
+              <div><strong>Aucun projet suivi pour l’instant</strong><p>Rien à afficher depuis le snapshot Hermès.</p></div>
+            </div>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function VariantG({
   model,
   snapshot,
@@ -962,6 +1033,7 @@ function VariantG({
   detail,
   onOpenPending,
   onOpenAlertes,
+  onOpenProjets,
   onCloseDetail,
 }: {
   model: ViewModel;
@@ -970,6 +1042,7 @@ function VariantG({
   detail: DetailKey | null;
   onOpenPending: () => void;
   onOpenAlertes: () => void;
+  onOpenProjets: () => void;
   onCloseDetail: () => void;
 }) {
   const tiles = useMemo(() => buildHomeTiles(model, snapshot), [model, snapshot]);
@@ -1025,6 +1098,7 @@ function VariantG({
 
   if (detail === 'attente') return <PendingValidationsDetail snapshot={snapshot} onBack={onCloseDetail} />;
   if (detail === 'alertes') return <AlertesDetail snapshot={snapshot} onBack={onCloseDetail} />;
+  if (detail === 'projets') return <ProjetsDetail model={model} snapshot={snapshot} onBack={onCloseDetail} />;
 
   return (
     <div className="ruth-variant-g">
@@ -1089,15 +1163,23 @@ function VariantG({
               key={tile.key}
               className="g-tile"
               onClick={
-                tile.key === 'attente' ? onOpenPending : tile.key === 'alertes' ? onOpenAlertes : undefined
+                tile.key === 'attente'
+                  ? onOpenPending
+                  : tile.key === 'alertes'
+                    ? onOpenAlertes
+                    : tile.key === 'projets'
+                      ? onOpenProjets
+                      : undefined
               }
-              disabled={tile.key !== 'attente' && tile.key !== 'alertes'}
+              disabled={tile.key !== 'attente' && tile.key !== 'alertes' && tile.key !== 'projets'}
               title={
                 tile.key === 'attente'
                   ? 'Voir les décisions en attente'
                   : tile.key === 'alertes'
                     ? 'Voir les alertes'
-                    : 'Pas encore de page de détail — niveau 2 à construire'
+                    : tile.key === 'projets'
+                      ? 'Voir les projets'
+                      : 'Pas encore de page de détail — niveau 2 à construire'
               }
             >
               <div className="g-tile-top">
@@ -1213,7 +1295,7 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
       {variant === 'D' ? <VariantD model={model} snapshot={snapshot} /> : null}
       {variant === 'E' ? <VariantE model={model} snapshot={snapshot} /> : null}
       {variant === 'F' ? <VariantF model={model} snapshot={snapshot} /> : null}
-      {variant === 'G' ? <VariantG model={model} snapshot={snapshot} onRefresh={onRefresh} detail={detail} onOpenPending={() => selectDetail('attente')} onOpenAlertes={() => selectDetail('alertes')} onCloseDetail={() => selectDetail(null)} /> : null}
+      {variant === 'G' ? <VariantG model={model} snapshot={snapshot} onRefresh={onRefresh} detail={detail} onOpenPending={() => selectDetail('attente')} onOpenAlertes={() => selectDetail('alertes')} onOpenProjets={() => selectDetail('projets')} onCloseDetail={() => selectDetail(null)} /> : null}
       <VariantSwitcher value={variant} onChange={selectVariant} />
       {variant !== 'D' && variant !== 'E' && variant !== 'F' && variant !== 'G' ? <MobileNavigation /> : null}
       <style>{RUTH_OS_STYLES}</style>
