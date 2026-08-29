@@ -81,21 +81,17 @@ Test mobile réel (Playwright, viewport iPhone 390×844, 2026-08-29) : aucun scr
 
 **STATUT GLOBAL** : `IN_PROGRESS`
 
-**CE QUI EXISTE** : première tranche locale « En attente » reliée au snapshot
-Hermès : clic depuis G, liste des décisions non terminées avec projet, contexte,
-priorité et action attendue, puis retour vers Hermès. Les données sont lues du
-snapshot existant ; aucune nouvelle source ni action n'est créée. Build TypeScript
-et build Vite réussis après ce changement.
+**CE QUI EXISTE** :
+- « En attente » (Codex) : liste des décisions non terminées avec projet, contexte, priorité et action attendue.
+- « Alertes » (Claude, 2026-08-29, autonomie) : même pattern (`?view=alertes`), vraie donnée (`snapshot.alerts`), testé réellement (clic, URL, contenu, 0 erreur console, pas de scroll horizontal mobile 390×844). Commit `17bf214`.
 
-**CE QUI MANQUE** : contrôle navigateur mobile final de « En attente » ; pages
-Projets, Personnel et Alertes ; une vraie source de données pour « Personnel ».
-Les trois tuiles restantes demeurent volontairement inactives.
+Les deux tuiles lisent le snapshot existant ; aucune nouvelle source ni action créée. `tsc --noEmit` propre.
+
+**CE QUI MANQUE** : pages Projets et Personnel (2 tuiles encore inactives) ; contrôle navigateur mobile final sur le vrai téléphone de Ruth (bloqué par le réseau, voir `A_VALIDER_PAR_RUTH.md`) ; une vraie source de données pour « Personnel ».
 
 **RUTH_DECISION_REQUIRED** : aucune posée pour l'instant — dépend de si/quand Ruth veut avancer ce bloc.
 
-**PROCHAINE ACTION** : terminer le contrôle mobile de « En attente », puis
-préparer la liste Projets à partir du contrat Project State, sans afficher de
-détails techniques au niveau 2.
+**PROCHAINE ACTION** : préparer la liste Projets à partir du contrat Project State, sans afficher de détails techniques au niveau 2. Personnel reste bloquée tant qu'aucune source de données réelle n'existe.
 
 ---
 
