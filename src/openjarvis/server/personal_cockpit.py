@@ -2548,6 +2548,94 @@ async def receive_adv_snapshot(request: Request):
         return {"ok": False}
 
 
+# Blocs A-Z par projet (2026-08-29, demande explicite de Ruth) — chaque projet
+# suivi par blocs (méthode CODEX_RUTH_OS/METHODE_PILOTAGE_PAR_BLOCS.md) a son
+# propre PROJECT_BUILD_MAP.md à la racine de son repo. Seuls les projets listés
+# ici en ont un aujourd'hui — ne pas en inventer pour les autres, l'écran doit
+# afficher honnêtement "pas encore suivi par blocs" plutôt que fabriquer des
+# blocs. Mettre à jour cette table quand un nouveau projet adopte la méthode.
+PROJECT_BUILD_MAP_PATHS: dict[str, Path] = {
+    "pedro": Path.home() / "Pedro-OS" / "PROJECT_BUILD_MAP.md",
+    "jarvis": Path.home() / "Jarvis" / "OpenJarvis" / "PROJECT_BUILD_MAP.md",
+}
+
+_BUILD_MAP_BLOCK_HEADER_RE = re.compile(r"(?m)^##\s*BLOCK\s+(\d+)\s*—\s*(.+?)\s*$")
+_BUILD_MAP_FIELDS = (
+    "OBJECTIF",
+    "STATUT GLOBAL",
+    "CE QUI EXISTE",
+    "CE QUI MANQUE",
+    "RUTH_DECISION_REQUIRED",
+    "PROCHAINE ACTION",
+)
+_BUILD_MAP_STATUS_TOKEN_RE = re.compile(r"`([A-Z_]+)`")
+
+
+def _parse_project_build_map(text: str) -> list[dict[str, Any]]:
+    """Parse a PROJECT_BUILD_MAP.md (format figé dans METHODE_PILOTAGE_PAR_BLOCS.md)
+    en une liste de blocs structurés. Best-effort : un champ absent ou mal
+    formaté reste vide/None plutôt que de faire planter le parsing — c'est du
+    markdown écrit par des humains/agents, pas un format machine strict."""
+    headers = list(_BUILD_MAP_BLOCK_HEADER_RE.finditer(text))
+    blocks: list[dict[str, Any]] = []
+    for i, header in enumerate(headers):
+        num, name = header.group(1), header.group(2).strip()
+        body_start = header.end()
+        body_end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
+        body = text[body_start:body_end].split("\n---", 1)[0]
+
+        # Toute étiquette en gras en début de ligne délimite un champ (pas
+        # seulement les 6 qui nous intéressent) — sinon des champs non listés
+        # ici (TÂCHES, BUGS CONNUS, TESTS...) restent collés à la valeur du
+        # champ précédent au lieu de la couper proprement.
+        matches = list(re.finditer(r"(?m)^\*\*([^*]+)\*\*\s*:?\s*", body))
+        values: dict[str, str] = {}
+        for j, m in enumerate(matches):
+            start = m.end()
+            end = matches[j + 1].start() if j + 1 < len(matches) else len(body)
+            values[m.group(1)] = body[start:end].strip()
+
+        status_raw = values.get("STATUT GLOBAL", "")
+        status_match = _BUILD_MAP_STATUS_TOKEN_RE.search(status_raw)
+        status = status_match.group(1) if status_match else None
+        status_note = status_raw[status_match.end():].strip(" .-—") if status_match else status_raw
+
+        blocks.append({
+            "num": num,
+            "name": name,
+            "objectif": values.get("OBJECTIF", ""),
+            "status": status,
+            "status_note": status_note,
+            "existe": values.get("CE QUI EXISTE", ""),
+            "manque": values.get("CE QUI MANQUE", ""),
+            "decision": values.get("RUTH_DECISION_REQUIRED", ""),
+            "next_action": values.get("PROCHAINE ACTION", ""),
+        })
+    return blocks
+
+
+@router.get("/project-blocks/{project_id}")
+async def get_project_blocks(project_id: str):
+    """Blocs A-Z réels d'un projet, lus en direct depuis son PROJECT_BUILD_MAP.md.
+    Pas de cache : le fichier peut être mis à jour par Hermès/Claude/Codex entre
+    deux ouvertures de l'écran."""
+    path = PROJECT_BUILD_MAP_PATHS.get(project_id)
+    if path is None or not path.exists():
+        return {"project_id": project_id, "tracked": False, "source_path": None, "blocks": []}
+    try:
+        text = path.read_text(encoding="utf-8")
+        blocks = _parse_project_build_map(text)
+    except Exception:
+        logger.exception("get_project_blocks failed for %s", project_id)
+        return {"project_id": project_id, "tracked": False, "source_path": str(path), "blocks": []}
+    return {
+        "project_id": project_id,
+        "tracked": True,
+        "source_path": str(path),
+        "blocks": blocks,
+    }
+
+
 @router.get("/adv-obsidian")
 async def get_adv_obsidian():
     """Return Obsidian context excerpts for the ADV cockpit (all tabs)."""

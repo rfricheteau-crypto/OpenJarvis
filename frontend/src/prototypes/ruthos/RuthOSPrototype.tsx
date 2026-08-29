@@ -26,9 +26,17 @@ import {
 } from 'lucide-react';
 
 import type { PersonalCockpitSnapshot } from '../../types';
-import { fetchPersonalCockpit, fetchAdvSnapshot, sendPersonalCockpitChat, submitHermesValidation, type AdvSnapshot } from '../../lib/api';
+import {
+  fetchPersonalCockpit,
+  fetchAdvSnapshot,
+  fetchProjectBlocks,
+  sendPersonalCockpitChat,
+  submitHermesValidation,
+  type AdvSnapshot,
+  type ProjectBlock,
+} from '../../lib/api';
 import { useAppStore } from '../../lib/store';
-import { STATUS_COLORS, priorityToStatus, type StatusKey } from './designSystem';
+import { STATUS_COLORS, priorityToStatus, blockStatusMeta, type StatusKey } from './designSystem';
 import { PROJECTS, type ProjectData } from '../../lib/projectsRegistry';
 
 type VariantKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
@@ -75,6 +83,10 @@ function currentDetail(): DetailKey | null {
 function currentProjectId(): string | null {
   const value = new URLSearchParams(window.location.search).get('project');
   return value && PROJECTS[value] ? value : null;
+}
+
+function currentBlockNum(): string | null {
+  return new URLSearchParams(window.location.search).get('block');
 }
 
 function cleanText(value: string | undefined | null, fallback: string): string {
@@ -1040,13 +1052,17 @@ function ProjectDetail({
   snapshot,
   onBack,
   onOpenHermes,
+  onOpenBlock,
 }: {
   project: ProjectData;
   snapshot: PersonalCockpitSnapshot | null;
   onBack: () => void;
   onOpenHermes: () => void;
+  onOpenBlock: (num: string) => void;
 }) {
   const [advSnapshot, setAdvSnapshot] = useState<AdvSnapshot | null>(null);
+  const [blocks, setBlocks] = useState<ProjectBlock[] | null>(null);
+  const [blocksTracked, setBlocksTracked] = useState(true);
 
   useEffect(() => {
     if (project.id !== 'adv') return;
@@ -1054,6 +1070,19 @@ function ProjectDetail({
     fetchAdvSnapshot()
       .then((data) => { if (!cancelled) setAdvSnapshot(data); })
       .catch(() => {});
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBlocks(null);
+    fetchProjectBlocks(project.id)
+      .then((data) => {
+        if (cancelled) return;
+        setBlocksTracked(data.tracked);
+        setBlocks(data.blocks);
+      })
+      .catch(() => { if (!cancelled) { setBlocksTracked(false); setBlocks([]); } });
     return () => { cancelled = true; };
   }, [project.id]);
 
@@ -1101,6 +1130,49 @@ function ProjectDetail({
             <span>Projet</span>
             <h1 id="project-detail-title">{project.name}</h1>
             <p>{project.tagline}</p>
+          </div>
+
+          <div>
+            <div className="g-detail-subheading">Construction A→Z</div>
+            {blocks === null ? (
+              <p className="g-blocks-loading">Chargement des blocs…</p>
+            ) : !blocksTracked || blocks.length === 0 ? (
+              <div className="g-empty-state">
+                <CheckCircle2 size={21} />
+                <div>
+                  <strong>Pas encore suivi par blocs</strong>
+                  <p>Ce projet n'a pas de PROJECT_BUILD_MAP.md pour l'instant — rien à afficher plutôt que d'inventer un découpage.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="g-block-list">
+                {blocks.map((block) => {
+                  const meta = blockStatusMeta(block.status);
+                  const c = STATUS_COLORS[meta.status];
+                  return (
+                    <button
+                      type="button"
+                      className="g-block-row"
+                      key={block.num}
+                      onClick={() => onOpenBlock(block.num)}
+                    >
+                      <span className="g-block-num">{block.num}</span>
+                      <span className="g-block-name">{block.name}</span>
+                      <span className="g-block-bar-wrap">
+                        <span className="g-block-bar-track">
+                          {meta.pct !== null ? (
+                            <span className="g-block-bar-fill" style={{ width: `${meta.pct}%`, background: c.fg }} />
+                          ) : null}
+                        </span>
+                      </span>
+                      <span className="g-block-pct">{meta.pct !== null ? `${meta.pct}%` : '—'}</span>
+                      <StatusPill status={meta.status} label={block.status ?? 'inconnu'} />
+                      <ChevronRight size={14} className="g-block-chev" />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {kpis.length > 0 && (
@@ -1155,30 +1227,158 @@ function ProjectDetail({
   );
 }
 
+function BlockDetail({
+  project,
+  blockNum,
+  onBack,
+  onOpenHermes,
+}: {
+  project: ProjectData;
+  blockNum: string;
+  onBack: () => void;
+  onOpenHermes: () => void;
+}) {
+  const [block, setBlock] = useState<ProjectBlock | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBlock(undefined);
+    fetchProjectBlocks(project.id)
+      .then((data) => {
+        if (cancelled) return;
+        setBlock(data.blocks.find((b) => b.num === blockNum) ?? null);
+      })
+      .catch(() => { if (!cancelled) setBlock(null); });
+    return () => { cancelled = true; };
+  }, [project.id, blockNum]);
+
+  if (block === undefined) {
+    return (
+      <div className="ruth-variant-g">
+        <HomeSidebar />
+        <main className="g-main" id="ruth-main">
+          <div className="d-topbar">
+            <button type="button" className="d-ghost-btn" onClick={onBack}>
+              <ArrowLeft size={15} /> Retour aux blocs {project.name}
+            </button>
+          </div>
+          <p className="g-blocks-loading">Chargement du bloc…</p>
+        </main>
+      </div>
+    );
+  }
+
+  if (block === null) {
+    return (
+      <div className="ruth-variant-g">
+        <HomeSidebar />
+        <main className="g-main" id="ruth-main">
+          <div className="d-topbar">
+            <button type="button" className="d-ghost-btn" onClick={onBack}>
+              <ArrowLeft size={15} /> Retour aux blocs {project.name}
+            </button>
+          </div>
+          <div className="g-empty-state">
+            <CheckCircle2 size={21} />
+            <div><strong>Bloc introuvable</strong><p>Ce bloc n'existe plus dans le PROJECT_BUILD_MAP.md de {project.name}.</p></div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const meta = blockStatusMeta(block.status);
+  const rows: Array<{ label: string; value: string; muted?: boolean }> = [
+    { label: 'Existe', value: cleanText(block.existe, 'Rien de renseigné.') },
+    { label: 'Manque', value: cleanText(block.manque, 'Rien de renseigné.'), muted: true },
+    { label: 'Décision', value: cleanText(block.decision, 'Aucune.') },
+  ];
+
+  return (
+    <div className="ruth-variant-g">
+      <HomeSidebar />
+      <main className="g-main" id="ruth-main">
+        <div className="d-topbar">
+          <button type="button" className="d-ghost-btn" onClick={onBack}>
+            <ArrowLeft size={15} /> Retour aux blocs {project.name}
+          </button>
+          <span className="d-status-line"><i className="d-dot" /> {block.status ?? 'statut inconnu'}</span>
+        </div>
+
+        <section className="g-detail" aria-labelledby="block-detail-title">
+          <div className="g-detail-heading">
+            <span>Bloc {block.num} · {project.name}</span>
+            <h1 id="block-detail-title">{block.name}</h1>
+            {block.objectif ? <p>{block.objectif}</p> : null}
+          </div>
+
+          <div className="g-stat-grid">
+            <div className="g-stat">
+              <span>Avancement</span>
+              <strong>{meta.pct !== null ? `${meta.pct}%` : '—'}</strong>
+              {block.status_note ? <em>{block.status_note}</em> : null}
+            </div>
+            <div className="g-stat">
+              <span>Statut</span>
+              <strong><StatusPill status={meta.status} label={block.status ?? 'inconnu'} /></strong>
+            </div>
+          </div>
+
+          <div className="g-decision-list" style={{ marginTop: 24 }}>
+            {rows.map((row) => (
+              <div className="g-decision-item" key={row.label} style={{ display: 'block' }}>
+                <span style={{ display: 'block', marginBottom: 4 }}>{row.label}</span>
+                <strong style={{ color: row.muted ? 'var(--d-muted)' : undefined, fontWeight: 400 }}>{row.value}</strong>
+              </div>
+            ))}
+          </div>
+
+          {block.next_action ? (
+            <div className="g-pending-action" style={{ marginTop: 20 }}>
+              <span>Prochaine action de ce bloc</span>
+              <strong>{block.next_action}</strong>
+            </div>
+          ) : null}
+
+          <button type="button" className="g-hermes-cta" onClick={onOpenHermes}>
+            <Sparkles size={14} /> Travailler ce bloc avec Hermès
+          </button>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function VariantG({
   model,
   snapshot,
   onRefresh,
   detail,
   projectId,
+  blockNum,
   onOpenPending,
   onOpenAlertes,
   onOpenProjets,
   onCloseDetail,
   onOpenProject,
   onBackToProjects,
+  onOpenBlock,
+  onBackToBlocks,
 }: {
   model: ViewModel;
   snapshot: PersonalCockpitSnapshot | null;
   onRefresh?: () => Promise<void>;
   detail: DetailKey | null;
   projectId: string | null;
+  blockNum: string | null;
   onOpenPending: () => void;
   onOpenAlertes: () => void;
   onOpenProjets: () => void;
   onCloseDetail: () => void;
   onOpenProject: (id: string) => void;
   onBackToProjects: () => void;
+  onOpenBlock: (num: string) => void;
+  onBackToBlocks: () => void;
 }) {
   const tiles = useMemo(() => buildHomeTiles(model, snapshot), [model, snapshot]);
   const pendingCount = tiles.find((t) => t.key === 'attente')?.count ?? 0;
@@ -1233,6 +1433,16 @@ function VariantG({
 
   if (detail === 'attente') return <PendingValidationsDetail snapshot={snapshot} onBack={onCloseDetail} />;
   if (detail === 'alertes') return <AlertesDetail snapshot={snapshot} onBack={onCloseDetail} />;
+  if (detail === 'projets' && projectId && PROJECTS[projectId] && blockNum) {
+    return (
+      <BlockDetail
+        project={PROJECTS[projectId]}
+        blockNum={blockNum}
+        onBack={onBackToBlocks}
+        onOpenHermes={onCloseDetail}
+      />
+    );
+  }
   if (detail === 'projets' && projectId && PROJECTS[projectId]) {
     return (
       <ProjectDetail
@@ -1240,6 +1450,7 @@ function VariantG({
         snapshot={snapshot}
         onBack={onBackToProjects}
         onOpenHermes={onCloseDetail}
+        onOpenBlock={onOpenBlock}
       />
     );
   }
@@ -1376,6 +1587,7 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
   const [variant, setVariant] = useState<VariantKey>(currentVariant);
   const [detail, setDetail] = useState<DetailKey | null>(currentDetail);
   const [projectId, setProjectId] = useState<string | null>(currentProjectId);
+  const [blockNum, setBlockNum] = useState<string | null>(currentBlockNum);
   const [sidebarInitiallyOpen] = useState(() => useAppStore.getState().sidebarOpen);
   const model = useMemo(() => buildViewModel(snapshot), [snapshot]);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
@@ -1391,26 +1603,46 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
   const selectDetail = useCallback((next: DetailKey | null) => {
     setDetail(next);
     setProjectId(null);
+    setBlockNum(null);
     const url = new URL(window.location.href);
     if (next) url.searchParams.set('view', next);
     else url.searchParams.delete('view');
     url.searchParams.delete('project');
+    url.searchParams.delete('block');
     window.history.pushState({}, '', url);
   }, []);
 
   const selectProject = useCallback((id: string) => {
     setDetail('projets');
     setProjectId(id);
+    setBlockNum(null);
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'projets');
     url.searchParams.set('project', id);
+    url.searchParams.delete('block');
     window.history.pushState({}, '', url);
   }, []);
 
   const backToProjects = useCallback(() => {
     setProjectId(null);
+    setBlockNum(null);
     const url = new URL(window.location.href);
     url.searchParams.delete('project');
+    url.searchParams.delete('block');
+    window.history.pushState({}, '', url);
+  }, []);
+
+  const selectBlock = useCallback((num: string) => {
+    setBlockNum(num);
+    const url = new URL(window.location.href);
+    url.searchParams.set('block', num);
+    window.history.pushState({}, '', url);
+  }, []);
+
+  const backToBlocks = useCallback(() => {
+    setBlockNum(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('block');
     window.history.pushState({}, '', url);
   }, []);
 
@@ -1428,6 +1660,7 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
       setVariant(currentVariant());
       setDetail(currentDetail());
       setProjectId(currentProjectId());
+      setBlockNum(currentBlockNum());
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -1439,7 +1672,8 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
       if (detail) {
         if (event.key === 'Escape') {
-          if (projectId) backToProjects();
+          if (blockNum) backToBlocks();
+          else if (projectId) backToProjects();
           else selectDetail(null);
         }
         return;
@@ -1452,7 +1686,7 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [detail, projectId, selectDetail, backToProjects, variant]);
+  }, [detail, projectId, blockNum, selectDetail, backToProjects, backToBlocks, variant]);
 
   return (
     <div className="ruth-prototype">
@@ -1470,12 +1704,15 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
           onRefresh={onRefresh}
           detail={detail}
           projectId={projectId}
+          blockNum={blockNum}
           onOpenPending={() => selectDetail('attente')}
           onOpenAlertes={() => selectDetail('alertes')}
           onOpenProjets={() => selectDetail('projets')}
           onCloseDetail={() => selectDetail(null)}
           onOpenProject={selectProject}
           onBackToProjects={backToProjects}
+          onOpenBlock={selectBlock}
+          onBackToBlocks={backToBlocks}
         />
       ) : null}
       <VariantSwitcher value={variant} onChange={selectVariant} />
@@ -1686,6 +1923,18 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.g-stat{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:14px;padding:14px}.g-stat span{display:block;font-size:11px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.06em}.g-stat strong{display:block;margin-top:4px;font-size:19px;color:var(--d-text)}.g-stat em{display:block;margin-top:2px;font-size:11px;font-style:normal;color:var(--d-muted)}
 .g-decision-list{display:grid;gap:10px}.g-decision-item{display:flex;gap:12px;align-items:baseline}.g-decision-item span{flex-shrink:0;font-size:11px;color:var(--d-muted);font-variant-numeric:tabular-nums}.g-decision-item strong{font-weight:500;font-size:13.5px;color:var(--d-text)}
 .g-hermes-cta{display:inline-flex;align-items:center;gap:8px;margin-top:28px;padding:11px 18px;border-radius:12px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.14);color:#c4b5fd;font-size:13px;cursor:pointer}.g-hermes-cta:hover{background:rgba(167,139,250,.22)}
+.g-blocks-loading{color:var(--d-muted);font-size:13px;margin:0}
+.g-block-list{display:grid;gap:8px}
+.g-block-row{width:100%;text-align:left;font:inherit;cursor:pointer;color:var(--d-text);background:var(--d-card);border:1px solid var(--d-card-border);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:12px;transition:border-color .15s ease,background .15s ease}
+.g-block-row:hover{border-color:#3b4570;background:#131b3c}
+.g-block-num{font-size:11px;color:#5c6693;width:20px;flex-shrink:0}
+.g-block-name{font-size:13.5px;font-weight:500;flex:1;min-width:0}
+.g-block-bar-wrap{width:90px;flex-shrink:0}
+.g-block-bar-track{height:5px;border-radius:3px;background:#1c2547;overflow:hidden}
+.g-block-bar-fill{display:block;height:100%;border-radius:3px}
+.g-block-pct{font-size:11px;color:var(--d-muted);width:32px;text-align:right;flex-shrink:0;font-variant-numeric:tabular-nums}
+.g-block-chev{color:#5c6693;flex-shrink:0}
+@media(max-width:640px){.g-block-name{font-size:12.5px}.g-block-bar-wrap{width:56px}.g-block-row{flex-wrap:wrap}}
 
 @media(max-width:980px){.ruth-variant-f,.ruth-variant-g{grid-template-columns:1fr}.d-sidebar{flex-direction:row;align-items:center;justify-content:space-between;padding:14px 16px}.d-nav{display:none}}
 @media(max-width:640px){.f-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.g-tiles{grid-template-columns:1fr}.g-conversation{flex-direction:column;align-items:center;text-align:center}.g-bubble{border-top-left-radius:20px}.g-bubble-input{grid-template-columns:1fr}.g-detail{padding-top:6px}.g-detail-heading{padding:15px 0 21px}.g-pending-item{padding:16px}.g-pending-item-head{flex-direction:column;gap:10px}.g-pending-item-head>.d-pill{align-self:flex-start}}

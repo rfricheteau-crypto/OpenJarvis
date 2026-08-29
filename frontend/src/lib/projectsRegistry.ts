@@ -27,6 +27,14 @@ export interface ProjectData {
 }
 
 export const PROJECTS: Record<string, ProjectData> = {
+  pedro: {
+    id: 'pedro',
+    name: 'Pedro',
+    tagline: "Débarras, brocante et valorisation de patrimoine mobilier",
+    accent: '#fb923c',
+    kpis: [],
+    decisions: [],
+  },
   adv: {
     id: 'adv',
     name: 'ADV',

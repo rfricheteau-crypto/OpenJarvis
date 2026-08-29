@@ -362,6 +362,31 @@ export async function fetchAdvObsidian(): Promise<AdvObsidian> {
   return res.json();
 }
 
+export interface ProjectBlock {
+  num: string;
+  name: string;
+  objectif: string;
+  status: string | null;
+  status_note: string;
+  existe: string;
+  manque: string;
+  decision: string;
+  next_action: string;
+}
+
+export interface ProjectBlocksResponse {
+  project_id: string;
+  tracked: boolean;
+  source_path: string | null;
+  blocks: ProjectBlock[];
+}
+
+export async function fetchProjectBlocks(projectId: string): Promise<ProjectBlocksResponse> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/project-blocks/${encodeURIComponent(projectId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch project blocks: ${res.status}`);
+  return res.json();
+}
+
 export interface HermesTraceEntry {
   event_type: string;
   status: string;
