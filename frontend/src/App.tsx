@@ -16,6 +16,7 @@ const AgentsPage = lazy(() => import('./pages/AgentsPage').then((m) => ({ defaul
 const DataSourcesPage = lazy(() => import('./pages/DataSourcesPage').then((m) => ({ default: m.DataSourcesPage })));
 const LogsPage = lazy(() => import('./pages/LogsPage').then((m) => ({ default: m.LogsPage })));
 const JarvisPersonalPage = lazy(() => import('./pages/JarvisPersonalPage').then((m) => ({ default: m.JarvisPersonalPage })));
+const RuthOSPrototypeRoute = lazy(() => import('./prototypes/ruthos/RuthOSPrototype').then((m) => ({ default: m.RuthOSPrototypeRoute })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then((m) => ({ default: m.ProjectDetailPage })));
 const HermesChatPage = lazy(() => import('./pages/HermesChatPage').then((m) => ({ default: m.HermesChatPage })));
 function RouteFallback() {
@@ -26,6 +27,15 @@ function RouteFallback() {
       </div>
     </div>
   );
+}
+
+function JarvisPersonalEntry() {
+  // RuthOS (variante G, validée par Ruth le 2026-08-29) est désormais l'écran par défaut.
+  // Échappatoire volontaire : ?classic=1 garde l'accès à l'ancien JarvisPersonalPage
+  // (vocal temps réel, etc. — pas encore repris dans le prototype), rien n'est supprimé.
+  const params = new URLSearchParams(window.location.search);
+  const classicRequested = params.get('classic') === '1';
+  return classicRequested ? <JarvisPersonalPage /> : <RuthOSPrototypeRoute />;
 }
 
 export default function App() {
@@ -131,8 +141,11 @@ export default function App() {
   }, [isPersonalCockpit, optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show opt-in modal on first visit
+  // Ne jamais l'afficher sur /jarvis-personal : G (RuthOS) y est l'écran par
+  // défaut depuis le 2026-08-29, cette modale bloquait tout l'écran par-dessus
+  // (bug réel trouvé en testant le rendu mobile, corrigé le jour même).
   useEffect(() => {
-    if (!optInModalSeen) {
+    if (!isPersonalCockpit && !optInModalSeen) {
       setOptInModalOpen(true);
       markOptInModalSeen();
     }
@@ -196,7 +209,7 @@ export default function App() {
           <Route element={<Layout />}>
             <Route index element={<ChatPage />} />
             <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="jarvis-personal" element={<JarvisPersonalPage />} />
+            <Route path="jarvis-personal" element={<JarvisPersonalEntry />} />
             <Route path="jarvis-personal/chat" element={<Navigate to="/jarvis-personal" replace />} />
             <Route path="hermes-chat" element={<HermesChatPage />} />
             <Route path="jarvis-personal/project/:id" element={<ProjectDetailPage />} />
