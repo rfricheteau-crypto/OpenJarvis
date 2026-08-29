@@ -56,7 +56,11 @@ montrer à Ruth (progressive disclosure).
 
 **CE QUI MANQUE** : vocal (voir tâche ci-dessus, 3 corrections avant intégration) ; tuile "Personnel" sans vraie source de données (seul `obsidian_action_inbox_count` en proxy partiel). Les tuiles Projets/Personnel/Alertes ne mènent pas encore vers une page complète (Bloc 02, "En attente" a une première tranche).
 
-**BUGS CONNUS** : aucun détecté à ce stade — pas de test end-to-end automatisé écrit non plus (uniquement `tsc` + vérification manuelle des routes en HTTP).
+**BUGS CONNUS** :
+- Corrigé (2026-08-29) : la modale d'opt-in "Share Your Savings" bloquait tout l'écran sur `/jarvis-personal` — sa condition de saut vérifiait encore l'ancien `?prototype=ruthos`, plus utilisé depuis que G est le défaut. Trouvé et corrigé via test Playwright viewport 390×844 (`frontend/src/App.tsx`, commit `0fc4c3b`).
+- Ouvert, mineur : le sélecteur de variante (A→G, outil de dev pour comparer, pas destiné à la production) chevauche/masque du contenu réel sur mobile étroit (390px) — visible derrière la pastille flottante en bas.
+
+Test mobile réel (Playwright, viewport iPhone 390×844, 2026-08-29) : aucun scroll horizontal, sidebar réduite en barre compacte, bulle Hermès/input/boutons bien dimensionnés. Test sur le vrai téléphone de Ruth toujours bloqué par le réseau (voir `A_VALIDER_PAR_RUTH.md`), Playwright utilisé comme substitut fiable en attendant.
 
 **TESTS** : `tsc --noEmit` propre (0 erreur) à chaque incrément. Aucun test automatisé (unitaire/E2E) écrit pour ce bloc — gap.
 
