@@ -62,7 +62,7 @@ montrer à Ruth (progressive disclosure).
 
 **CRITÈRES DE FIN** : Ruth teste le chat et l'approbation en conditions réelles et confirme que ça fonctionne comme attendu → passage à `TESTED`, puis `DONE` si aucune correction demandée.
 
-**DERNIÈRE REVUE CLAUDE** : 2026-08-29, construit et vérifié par compilation + routes HTTP, jamais testé en usage réel.
+**DERNIÈRE REVUE CLAUDE** : 2026-08-29, construit et vérifié par compilation + routes HTTP, jamais testé en usage réel. Ruth a reconfirmé G ("OK pour G") après verrouillage de `RUTH_OS_VISION.md`/`PROJECT_A_TO_Z.md` — reconfirme la direction, ne remplace pas le test réel du câblage (case toujours non cochée ci-dessus).
 **DERNIÈRE REVUE CODEX** : Codex a construit en parallèle le routage propre (`App.tsx` → `RuthOSPrototypeRoute`, lazy-loaded, fetch du snapshot) — non consigné ici avant maintenant, à confirmer avec Codex à sa prochaine session.
 
 **RUTH_DECISION_REQUIRED** : aucune nouvelle — palette, structure et variante déjà tranchées.
