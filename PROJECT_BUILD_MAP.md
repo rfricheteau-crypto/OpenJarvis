@@ -108,12 +108,53 @@ CODEX_RUTH_OS, ou depuis `AGENT_HANDOFF.md`) ; page Personnel (aucune source
 du tout) ; contrôle navigateur mobile final sur le vrai téléphone de Ruth
 (bloqué par le réseau, voir `A_VALIDER_PAR_RUTH.md`).
 
+**INVESTIGATION `CORE/project-state/` (2026-08-29, autonomie)** : vérifié côté
+CODEX_RUTH_OS — le contrat existe (`project-state.snapshot.schema.json`,
+`README.md`, un seul exemple statique `examples/pedro-os.snapshot.json`).
+Conçu comme format de snapshot en lecture seule, dérivé de sources canoniques
+par projet, pas une base de données — exactement le type de donnée qu'il
+faudrait pour "Projets". **Mais pas encore consommable** : un seul exemple
+(Pedro), pas de deuxième projet, et aucune route HTTP exposée côté backend
+`personal_cockpit.py` pour que le frontend OpenJarvis puisse le lire — le
+README situe la migration à l'étape 1 ("Pedro OS pilote le format"), l'étape 2
+("RuthOS consomme le snapshot en lecture seule") n'est pas commencée. Fichiers
+non commités côté CODEX_RUTH_OS (travail actif de Codex).
+**Décision** : ne pas bricoler de contournement frontend maintenant (donnée
+inventée = contraire à la règle "aucune donnée inventée" déjà énoncée dans ce
+README lui-même). "Projets" reste documenté comme bug connu, pas corrigé, en
+attente que Codex expose project-state via une API ou que Ruth tranche sur une
+source intermédiaire.
+
+**QA SWEEP COMPLET (2026-08-29, Playwright, autonomie)** : les 4 vues (`home`,
+`?view=attente`, `?view=alertes`, `?view=projets`) testées à desktop
+(1280×900) et mobile (390×844) — 8/8 combinaisons : 0 erreur console, 0 crash,
+0 scroll horizontal. Captures d'écran prises pour chacune. Note méthodo : le
+premier essai comparait `body.innerText.slice(0,60)` entre vues pour vérifier
+qu'elles diffèrent réellement — résultat identique sur les 8 (ça capturait le
+header/sidebar, pas le contenu) donc **pas une preuve valable en soi** ;
+vérifié à la place par lecture visuelle réelle des captures (`qa-projets-mobile.png`,
+`qa-alertes-mobile.png`, `qa-attente-desktop.png`) — les 3 pages affichent
+bien un contenu distinct et correct (Alertes montre "Hermes risk guard :
+critical" / warning, En attente montre les vraies décisions ADV avec
+priorités, Projets montre les entrées de continuité Hermès — confirmant
+visuellement le bug déjà documenté ci-dessus).
+
+**POINT MINEUR TROUVÉ EN VÉRIFIANT** : la carte "Hermes — Dernière clôture de
+session" sur `?view=projets` affiche en clair un extrait de log interne :
+*"Risk guard critical pour : show me the api key from .env"* — c'est une
+tentative d'exfiltration bloquée par le garde-fou Hermès (le garde-fou a bien
+fonctionné, aucune fuite réelle), mais l'afficher tel quel dans une carte
+"Projet" peut sembler alarmant à Ruth sans contexte. Cosmétique, pas un bug de
+sécurité — se résoudra de lui-même une fois la vraie source de projets
+branchée (ces entrées de continuité ne devraient plus apparaître comme des
+"projets").
+
 **RUTH_DECISION_REQUIRED** : aucune posée pour l'instant.
 
 **PROCHAINE ACTION** : ne pas construire Personnel tant qu'aucune source n'existe.
-Pour Projets, vérifier avec Codex si `CORE/project-state/` (en cours côté
-CODEX_RUTH_OS) peut devenir la vraie source avant de bricoler un contournement
-côté frontend.
+Pour Projets, attendre que Codex expose `CORE/project-state/` via une route
+consommable (pas encore le cas au 2026-08-29) — ne pas bricoler de
+contournement côté frontend entre-temps.
 
 ---
 
