@@ -166,6 +166,21 @@ contournement côté frontend entre-temps.
 
 **STATUT GLOBAL** : `READY_FOR_TEST` — construit et testé par Playwright ce soir (2026-08-29, sur demande directe de Ruth), pas encore testé en direct par elle.
 
+**AJOUT — Blocs A→Z réels (2026-08-29)** : Ruth a demandé la visibilité des
+blocs de construction A→Z à l'intérieur de chaque projet (pas une nouvelle
+idée — déjà anticipé dans `CORE/PROJECT_A_TO_Z.md` §"Mise en œuvre
+progressive"). Maquette visuelle proposée (2 options), Ruth a choisi Option B
+(écran plein écran par bloc), conversion statut→% simple, garder les noms de
+blocs déjà réels par projet. Construit et testé réellement : nouvel endpoint
+`GET /v1/personal-cockpit/project-blocks/{project_id}` qui parse en direct le
+`PROJECT_BUILD_MAP.md` du projet (testé sur les 25 blocs réels de Pedro et les
+4 d'OpenJarvis) ; Pedro ajouté au registre de projets (absent jusque-là) ;
+écran `BlockDetail` dédié par bloc. ADV/ABG/Obsidian/Graphify/Valéna n'ont pas
+encore de `PROJECT_BUILD_MAP.md` → état honnête "pas encore suivi par blocs",
+rien d'inventé. Commit `8bf190b`. **Interrompu ici** : Ruth a demandé de passer
+à un audit plus large (orchestration Hermès) avant de continuer sur
+l'interface — reprendre le fil Bloc 03 après.
+
 **DÉCOUVERTE DE DÉPART** : `frontend/src/pages/ProjectDetailPage.tsx` (1265
 lignes, écrit le 2026-05-19, jamais relié à aucune UI) existait déjà et
 fonctionnait (vérifié en direct : 6 routes `/jarvis-personal/project/:id`,
