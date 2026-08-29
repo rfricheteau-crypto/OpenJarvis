@@ -40,7 +40,11 @@ function JarvisPersonalEntry() {
 
 export default function App() {
   const location = useLocation();
-  const isPersonalCockpit = location.pathname === '/jarvis-personal';
+  // Préfixe, pas égalité stricte : couvre aussi /jarvis-personal/project/:id
+  // (écran de détail projet) — la modale d'opt-in bloquait cette page pour la
+  // même raison qu'elle bloquait /jarvis-personal avant le correctif du
+  // 2026-08-29 (0fc4c3b), trouvé en testant le Bloc 03.
+  const isPersonalCockpit = location.pathname.startsWith('/jarvis-personal');
   const [setupDone, setSetupDone] = useState(!isTauri());
   const handleSetupReady = useCallback(() => setSetupDone(true), []);
   const setModels = useAppStore((s) => s.setModels);

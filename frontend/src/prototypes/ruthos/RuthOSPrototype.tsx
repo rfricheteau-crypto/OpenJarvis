@@ -26,9 +26,10 @@ import {
 } from 'lucide-react';
 
 import type { PersonalCockpitSnapshot } from '../../types';
-import { fetchPersonalCockpit, sendPersonalCockpitChat, submitHermesValidation } from '../../lib/api';
+import { fetchPersonalCockpit, fetchAdvSnapshot, sendPersonalCockpitChat, submitHermesValidation, type AdvSnapshot } from '../../lib/api';
 import { useAppStore } from '../../lib/store';
 import { STATUS_COLORS, priorityToStatus, type StatusKey } from './designSystem';
+import { PROJECTS, type ProjectData } from '../../lib/projectsRegistry';
 
 type VariantKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
 type DetailKey = 'attente' | 'alertes' | 'projets';
@@ -42,7 +43,7 @@ type ViewModel = {
   nextAction: string;
   nextActionDetail: string;
   decisions: Array<{ project: string; title: string; detail: string }>;
-  projects: Array<{ title: string; summary: string }>;
+  projects: Array<{ id: string; title: string; summary: string }>;
   risks: Array<{ title: string; detail: string; level: string }>;
   hermesSummary: string;
   healthyServices: number;
@@ -60,12 +61,6 @@ const VARIANTS: Array<{ key: VariantKey; label: string; description: string }> =
   { key: 'G', label: 'Conversation Hermès', description: 'Hermès porte la priorité, tuiles en second plan' },
 ];
 
-const FALLBACK_PROJECTS = [
-  { title: 'Pedro OS', summary: 'Parcours Terrain et caméra à fiabiliser.' },
-  { title: 'RuthOS', summary: 'Direction UX validée, prototype visuel en cours.' },
-  { title: 'ADV', summary: 'Projet en veille, continuité préservée.' },
-];
-
 function currentVariant(): VariantKey {
   const value = new URLSearchParams(window.location.search).get('variant')?.toUpperCase();
   // G (Conversation Hermès) est la direction validée par Ruth le 2026-08-29 — défaut.
@@ -75,6 +70,11 @@ function currentVariant(): VariantKey {
 function currentDetail(): DetailKey | null {
   const value = new URLSearchParams(window.location.search).get('view');
   return value === 'attente' || value === 'alertes' || value === 'projets' ? value : null;
+}
+
+function currentProjectId(): string | null {
+  const value = new URLSearchParams(window.location.search).get('project');
+  return value && PROJECTS[value] ? value : null;
 }
 
 function cleanText(value: string | undefined | null, fallback: string): string {
@@ -89,9 +89,10 @@ function buildViewModel(snapshot: PersonalCockpitSnapshot | null): ViewModel {
     detail: cleanText(item.why_pending || item.expected_action, 'Validation de Ruth attendue.'),
   }));
 
-  const projects = (snapshot?.continuity ?? []).slice(0, 4).map((item) => ({
-    title: cleanText(item.heading, 'Projet'),
-    summary: cleanText(item.summary, 'État à actualiser.'),
+  const projects = Object.values(PROJECTS).map((project) => ({
+    id: project.id,
+    title: project.name,
+    summary: project.tagline,
   }));
 
   return {
@@ -106,7 +107,7 @@ function buildViewModel(snapshot: PersonalCockpitSnapshot | null): ViewModel {
     decisions: decisions.length
       ? decisions
       : [{ project: 'RuthOS', title: 'Aucune décision urgente détectée', detail: 'Le prototype reste en lecture seule.' }],
-    projects: projects.length ? projects : FALLBACK_PROJECTS,
+    projects,
     risks: (snapshot?.alerts ?? []).slice(0, 3).map((alert) => ({
       title: cleanText(alert.title, 'Point de vigilance'),
       detail: cleanText(alert.detail, 'À contrôler.'),
@@ -959,10 +960,12 @@ function ProjetsDetail({
   model,
   snapshot,
   onBack,
+  onOpenProject,
 }: {
   model: ViewModel;
   snapshot: PersonalCockpitSnapshot | null;
   onBack: () => void;
+  onOpenProject: (id: string) => void;
 }) {
   const rawValidations = snapshot?.pending_validations ?? [];
 
@@ -991,7 +994,12 @@ function ProjetsDetail({
                   (item) => (item.project || '').toLowerCase() === project.title.toLowerCase(),
                 );
                 return (
-                  <article className="g-pending-item" key={`${project.title}-${index}`}>
+                  <button
+                    type="button"
+                    className="g-pending-item g-pending-item-clickable"
+                    key={`${project.title}-${index}`}
+                    onClick={() => onOpenProject(project.id)}
+                  >
                     <div className="g-pending-item-head">
                       <div>
                         <span className="g-pending-project">Projet</span>
@@ -1010,7 +1018,8 @@ function ProjetsDetail({
                         <strong>{cleanText(decision.expected_action, decision.title)}</strong>
                       </div>
                     ) : null}
-                  </article>
+                    <span className="g-pending-item-more">Voir le détail <ChevronRight size={14} /></span>
+                  </button>
                 );
               })}
             </div>
@@ -1026,24 +1035,150 @@ function ProjetsDetail({
   );
 }
 
+function ProjectDetail({
+  project,
+  snapshot,
+  onBack,
+  onOpenHermes,
+}: {
+  project: ProjectData;
+  snapshot: PersonalCockpitSnapshot | null;
+  onBack: () => void;
+  onOpenHermes: () => void;
+}) {
+  const [advSnapshot, setAdvSnapshot] = useState<AdvSnapshot | null>(null);
+
+  useEffect(() => {
+    if (project.id !== 'adv') return;
+    let cancelled = false;
+    fetchAdvSnapshot()
+      .then((data) => { if (!cancelled) setAdvSnapshot(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  const liveKpis =
+    project.id === 'adv' && advSnapshot && !advSnapshot._empty
+      ? [
+          {
+            label: 'MRR',
+            value: advSnapshot.business?.mrr != null ? `${advSnapshot.business.mrr.toLocaleString('fr-FR')} €` : '—',
+            note: undefined as string | undefined,
+          },
+          {
+            label: 'Abonnements actifs',
+            value: advSnapshot.abonnements?.actifs != null ? String(advSnapshot.abonnements.actifs) : '—',
+            note: undefined as string | undefined,
+          },
+          {
+            label: 'Churn',
+            value: advSnapshot.abonnements?.churn_rate != null ? `${(advSnapshot.abonnements.churn_rate * 100).toFixed(1)} %` : '—',
+            note: undefined as string | undefined,
+          },
+        ]
+      : null;
+
+  const kpis = liveKpis ?? project.kpis;
+
+  const alerts = project.id === 'jarvis' ? (snapshot?.alerts ?? []).filter((a) => a.level !== 'ok') : [];
+
+  return (
+    <div className="ruth-variant-g">
+      <HomeSidebar />
+      <main className="g-main" id="ruth-main">
+        <div className="d-topbar">
+          <button type="button" className="d-ghost-btn" onClick={onBack}>
+            <ArrowLeft size={15} /> Retour à Projets
+          </button>
+          <span className="d-status-line">
+            <i className={`d-dot ${project.id === 'adv' ? 'd-dot-active' : ''}`} />
+            {project.id === 'adv' ? 'Données live' : 'Données statiques'}
+          </span>
+        </div>
+
+        <section className="g-detail" aria-labelledby="project-detail-title">
+          <div className="g-detail-heading">
+            <span>Projet</span>
+            <h1 id="project-detail-title">{project.name}</h1>
+            <p>{project.tagline}</p>
+          </div>
+
+          {kpis.length > 0 && (
+            <div className="g-stat-grid">
+              {kpis.map((kpi) => (
+                <div className="g-stat" key={kpi.label}>
+                  <span>{kpi.label}</span>
+                  <strong>{kpi.value}</strong>
+                  {kpi.note ? <em>{kpi.note}</em> : null}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {alerts.length > 0 && (
+            <div>
+              <div className="g-detail-subheading">Alertes</div>
+              <div className="g-pending-list">
+                {alerts.map((alert, i) => (
+                  <article className="g-pending-item" key={i}>
+                    <div className="g-pending-item-head">
+                      <h2>{cleanText(alert.title, 'Point de vigilance')}</h2>
+                      <StatusPill status={alert.level === 'critical' ? 'urgent' : 'attention'} label={alert.level} />
+                    </div>
+                    {alert.detail ? <p>{alert.detail}</p> : null}
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {project.decisions.length > 0 && (
+            <div>
+              <div className="g-detail-subheading">Décisions clés</div>
+              <div className="g-decision-list">
+                {project.decisions.map((d, i) => (
+                  <div className="g-decision-item" key={i}>
+                    <span>{d.date}</span>
+                    <strong>{d.text}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button type="button" className="g-hermes-cta" onClick={onOpenHermes}>
+            <Sparkles size={14} /> Demander à Hermès
+          </button>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function VariantG({
   model,
   snapshot,
   onRefresh,
   detail,
+  projectId,
   onOpenPending,
   onOpenAlertes,
   onOpenProjets,
   onCloseDetail,
+  onOpenProject,
+  onBackToProjects,
 }: {
   model: ViewModel;
   snapshot: PersonalCockpitSnapshot | null;
   onRefresh?: () => Promise<void>;
   detail: DetailKey | null;
+  projectId: string | null;
   onOpenPending: () => void;
   onOpenAlertes: () => void;
   onOpenProjets: () => void;
   onCloseDetail: () => void;
+  onOpenProject: (id: string) => void;
+  onBackToProjects: () => void;
 }) {
   const tiles = useMemo(() => buildHomeTiles(model, snapshot), [model, snapshot]);
   const pendingCount = tiles.find((t) => t.key === 'attente')?.count ?? 0;
@@ -1098,7 +1233,17 @@ function VariantG({
 
   if (detail === 'attente') return <PendingValidationsDetail snapshot={snapshot} onBack={onCloseDetail} />;
   if (detail === 'alertes') return <AlertesDetail snapshot={snapshot} onBack={onCloseDetail} />;
-  if (detail === 'projets') return <ProjetsDetail model={model} snapshot={snapshot} onBack={onCloseDetail} />;
+  if (detail === 'projets' && projectId && PROJECTS[projectId]) {
+    return (
+      <ProjectDetail
+        project={PROJECTS[projectId]}
+        snapshot={snapshot}
+        onBack={onBackToProjects}
+        onOpenHermes={onCloseDetail}
+      />
+    );
+  }
+  if (detail === 'projets') return <ProjetsDetail model={model} snapshot={snapshot} onBack={onCloseDetail} onOpenProject={onOpenProject} />;
 
   return (
     <div className="ruth-variant-g">
@@ -1230,6 +1375,7 @@ function VariantSwitcher({ value, onChange }: { value: VariantKey; onChange: (va
 export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
   const [variant, setVariant] = useState<VariantKey>(currentVariant);
   const [detail, setDetail] = useState<DetailKey | null>(currentDetail);
+  const [projectId, setProjectId] = useState<string | null>(currentProjectId);
   const [sidebarInitiallyOpen] = useState(() => useAppStore.getState().sidebarOpen);
   const model = useMemo(() => buildViewModel(snapshot), [snapshot]);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
@@ -1244,9 +1390,27 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
 
   const selectDetail = useCallback((next: DetailKey | null) => {
     setDetail(next);
+    setProjectId(null);
     const url = new URL(window.location.href);
     if (next) url.searchParams.set('view', next);
     else url.searchParams.delete('view');
+    url.searchParams.delete('project');
+    window.history.pushState({}, '', url);
+  }, []);
+
+  const selectProject = useCallback((id: string) => {
+    setDetail('projets');
+    setProjectId(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'projets');
+    url.searchParams.set('project', id);
+    window.history.pushState({}, '', url);
+  }, []);
+
+  const backToProjects = useCallback(() => {
+    setProjectId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('project');
     window.history.pushState({}, '', url);
   }, []);
 
@@ -1263,6 +1427,7 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
     const onPopState = () => {
       setVariant(currentVariant());
       setDetail(currentDetail());
+      setProjectId(currentProjectId());
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -1273,7 +1438,10 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
       const target = event.target as HTMLElement | null;
       if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
       if (detail) {
-        if (event.key === 'Escape') selectDetail(null);
+        if (event.key === 'Escape') {
+          if (projectId) backToProjects();
+          else selectDetail(null);
+        }
         return;
       }
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -1284,7 +1452,7 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [detail, selectDetail, variant]);
+  }, [detail, projectId, selectDetail, backToProjects, variant]);
 
   return (
     <div className="ruth-prototype">
@@ -1295,7 +1463,21 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
       {variant === 'D' ? <VariantD model={model} snapshot={snapshot} /> : null}
       {variant === 'E' ? <VariantE model={model} snapshot={snapshot} /> : null}
       {variant === 'F' ? <VariantF model={model} snapshot={snapshot} /> : null}
-      {variant === 'G' ? <VariantG model={model} snapshot={snapshot} onRefresh={onRefresh} detail={detail} onOpenPending={() => selectDetail('attente')} onOpenAlertes={() => selectDetail('alertes')} onOpenProjets={() => selectDetail('projets')} onCloseDetail={() => selectDetail(null)} /> : null}
+      {variant === 'G' ? (
+        <VariantG
+          model={model}
+          snapshot={snapshot}
+          onRefresh={onRefresh}
+          detail={detail}
+          projectId={projectId}
+          onOpenPending={() => selectDetail('attente')}
+          onOpenAlertes={() => selectDetail('alertes')}
+          onOpenProjets={() => selectDetail('projets')}
+          onCloseDetail={() => selectDetail(null)}
+          onOpenProject={selectProject}
+          onBackToProjects={backToProjects}
+        />
+      ) : null}
       <VariantSwitcher value={variant} onChange={selectVariant} />
       {variant !== 'D' && variant !== 'E' && variant !== 'F' && variant !== 'G' ? <MobileNavigation /> : null}
       <style>{RUTH_OS_STYLES}</style>
@@ -1499,6 +1681,11 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-tile strong{font-size:14px}
 .g-tile span:last-child{font-size:11.5px;color:var(--d-muted);line-height:1.35}
 .g-detail{max-width:880px;margin:0 auto;padding:18px 0 56px}.g-detail-heading{padding:22px 0 26px}.g-detail-heading>span,.g-pending-action>span{display:block;color:#aeb9e8;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}.g-detail-heading h1{font-size:clamp(30px,4vw,46px);line-height:1.05;margin:8px 0 10px}.g-detail-heading p{margin:0;color:var(--d-muted);font-size:14px;line-height:1.5;max-width:580px}.g-pending-list{display:grid;gap:12px}.g-pending-item{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:18px}.g-pending-item-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.g-pending-project{display:block;color:#aeb9e8;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px}.g-pending-item h2{font-size:17px;line-height:1.25;margin:0}.g-pending-item>p{margin:13px 0;color:var(--d-muted);font-size:13px;line-height:1.5}.g-pending-action{border-top:1px solid var(--d-card-border);padding-top:12px}.g-pending-action strong{display:block;margin-top:5px;font-size:13px;line-height:1.4}.g-empty-state{display:flex;gap:12px;align-items:flex-start;background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:20px;color:#86efac}.g-empty-state strong{display:block;color:var(--d-text);margin-bottom:4px}.g-empty-state p{margin:0;color:var(--d-muted);font-size:13px}
+.g-pending-item-clickable{width:100%;text-align:left;cursor:pointer;font:inherit;transition:transform .16s ease,border-color .16s ease}.g-pending-item-clickable:hover{transform:translateY(-2px);border-color:#5965a6}.g-pending-item-clickable:focus-visible{outline:2px solid var(--d-blue);outline-offset:3px}.g-pending-item-more{display:inline-flex;align-items:center;gap:4px;margin-top:10px;font-size:12px;color:#aeb9e8}
+.g-detail-subheading{margin:26px 0 12px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#aeb9e8}
+.g-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.g-stat{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:14px;padding:14px}.g-stat span{display:block;font-size:11px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.06em}.g-stat strong{display:block;margin-top:4px;font-size:19px;color:var(--d-text)}.g-stat em{display:block;margin-top:2px;font-size:11px;font-style:normal;color:var(--d-muted)}
+.g-decision-list{display:grid;gap:10px}.g-decision-item{display:flex;gap:12px;align-items:baseline}.g-decision-item span{flex-shrink:0;font-size:11px;color:var(--d-muted);font-variant-numeric:tabular-nums}.g-decision-item strong{font-weight:500;font-size:13.5px;color:var(--d-text)}
+.g-hermes-cta{display:inline-flex;align-items:center;gap:8px;margin-top:28px;padding:11px 18px;border-radius:12px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.14);color:#c4b5fd;font-size:13px;cursor:pointer}.g-hermes-cta:hover{background:rgba(167,139,250,.22)}
 
 @media(max-width:980px){.ruth-variant-f,.ruth-variant-g{grid-template-columns:1fr}.d-sidebar{flex-direction:row;align-items:center;justify-content:space-between;padding:14px 16px}.d-nav{display:none}}
 @media(max-width:640px){.f-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.g-tiles{grid-template-columns:1fr}.g-conversation{flex-direction:column;align-items:center;text-align:center}.g-bubble{border-top-left-radius:20px}.g-bubble-input{grid-template-columns:1fr}.g-detail{padding-top:6px}.g-detail-heading{padding:15px 0 21px}.g-pending-item{padding:16px}.g-pending-item-head{flex-direction:column;gap:10px}.g-pending-item-head>.d-pill{align-self:flex-start}}

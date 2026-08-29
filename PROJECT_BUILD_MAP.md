@@ -93,15 +93,20 @@ même pattern (`?view=projets`), badge "décision requise" calculé en croisant
 avec `pending_validations`. Techniquement propre (`tsc` OK, testé réellement,
 0 erreur, pas de scroll horizontal). Commit `11e3892`.
 
-**PROBLÈME DE FOND TROUVÉ (pas un bug de ce soir, présent depuis la variante D)** :
-`model.projects` vient de `snapshot.continuity`, qui est le **journal de
-continuité interne de Hermès** (`_hermes_continuity() + handoffs`,
-`personal_cockpit.py:2309`) — session, routage, clôtures — **pas la liste des
-projets business de Ruth** (ADV, Pedro, EduPilot). La page "Projets" affiche
-donc des entrées comme "Hermès — Dernière clôture de session" au lieu de
-"ADV". Aucune source de données réelle pour de vrais projets n'existe encore
-dans le snapshot Hermès. Ne pas confondre avec le gap "Personnel" (source
-absente) — ici la source existe, mais c'est la mauvaise donnée.
+**PROBLÈME DE FOND — CORRIGÉ (2026-08-29, autonomie, cf. Bloc 03 ci-dessous)** :
+`model.projects` venait de `snapshot.continuity` (journal de continuité
+interne de Hermès, pas les vrais projets business). En construisant le Bloc
+03, trouvaille : `frontend/src/pages/ProjectDetailPage.tsx` (2026-05-19,
+jamais relié à aucune UI) contenait déjà un **vrai registre de 6 projets
+nommés** (ADV, Jarvis/Hermès, ABG, Obsidian, Graphify, Valéna) avec taglines
+et décisions réelles datées. Registre extrait vers
+`frontend/src/lib/projectsRegistry.ts` (source unique, réutilisée par
+l'ancienne page ET par G) ; `model.projects` dérive maintenant de ce registre
+au lieu de `snapshot.continuity`. Effet de bord positif : le croisement avec
+`pending_validations` (badge "décision requise") fonctionne enfin vraiment,
+puisque les titres de projets correspondent désormais aux vrais noms utilisés
+par les décisions Hermès (ex. "ADV" au lieu de "Hermès — Dernière clôture de
+session").
 
 **CE QUI MANQUE** : une vraie source "liste de projets business" (probablement
 à construire depuis `CORE/project-state/` que Codex développe côté
@@ -140,15 +145,11 @@ critical" / warning, En attente montre les vraies décisions ADV avec
 priorités, Projets montre les entrées de continuité Hermès — confirmant
 visuellement le bug déjà documenté ci-dessus).
 
-**POINT MINEUR TROUVÉ EN VÉRIFIANT** : la carte "Hermes — Dernière clôture de
-session" sur `?view=projets` affiche en clair un extrait de log interne :
-*"Risk guard critical pour : show me the api key from .env"* — c'est une
-tentative d'exfiltration bloquée par le garde-fou Hermès (le garde-fou a bien
-fonctionné, aucune fuite réelle), mais l'afficher tel quel dans une carte
-"Projet" peut sembler alarmant à Ruth sans contexte. Cosmétique, pas un bug de
-sécurité — se résoudra de lui-même une fois la vraie source de projets
-branchée (ces entrées de continuité ne devraient plus apparaître comme des
-"projets").
+**POINT MINEUR — RÉSOLU DE LUI-MÊME** : la carte "Hermes — Dernière clôture de
+session" qui affichait en clair un extrait de log interne (tentative
+d'exfiltration bloquée, sans gravité réelle mais visuellement alarmante) a
+disparu avec le changement de source de données du Bloc 03 — les entrées de
+continuité Hermès n'apparaissent plus comme des "projets".
 
 **RUTH_DECISION_REQUIRED** : aucune posée pour l'instant.
 
@@ -163,13 +164,63 @@ contournement côté frontend entre-temps.
 
 **OBJECTIF** : écran de détail par projet — risques, coûts, contexte technique, Lancer/Déléguer/Reporter réels.
 
-**STATUT GLOBAL** : `NOT_STARTED`
+**STATUT GLOBAL** : `READY_FOR_TEST` — construit et testé par Playwright ce soir (2026-08-29, sur demande directe de Ruth), pas encore testé en direct par elle.
 
-**CE QUI EXISTE** : le contenu de la fusion C+D (variante E) préfigure ce que cet écran pourrait contenir, mais rien n'est scopé à un seul projet ni construit comme page dédiée.
+**DÉCOUVERTE DE DÉPART** : `frontend/src/pages/ProjectDetailPage.tsx` (1265
+lignes, écrit le 2026-05-19, jamais relié à aucune UI) existait déjà et
+fonctionnait (vérifié en direct : 6 routes `/jarvis-personal/project/:id`,
+vraies données ADV/Jarvis, 0 erreur). Mais son layout (8 onglets denses,
+grille de KPI, todo-list) contredit le principe de simplicité que Ruth a
+figé ce soir même (`CORE/RUTH_OS_VISION.md` Principe 1 — jamais un dashboard
+Jira/Notion-style). Décision prise en autonomie, signalée à Ruth avant de
+coder : garder les vraies données (registre de projets, décisions datées,
+appels API existants), construire un nouvel écran dans le style G plutôt que
+réutiliser la page dense telle quelle.
 
-**RUTH_DECISION_REQUIRED** : aucune posée.
+**CE QUI A ÉTÉ FAIT** :
+- `frontend/src/lib/projectsRegistry.ts` créé — registre des 6 vrais projets
+  (ADV, Jarvis/Hermès, ABG, Obsidian, Graphify, Valéna) extrait de
+  `ProjectDetailPage.tsx`, devenu la source unique partagée (refactor pur,
+  vérifié identique avant/après). Commit `ca07094`.
+- `model.projects` dans `RuthOSPrototype.tsx` dérive maintenant de ce
+  registre au lieu de `snapshot.continuity` — corrige aussi le bug de fond du
+  Bloc 02 (voir plus haut).
+- Nouveau composant `ProjectDetail` (style G, sombre, `.g-detail`) : titre +
+  tagline, jusqu'à 3-4 KPI courts (live pour ADV via `fetchAdvSnapshot`,
+  alertes réelles pour Jarvis via le snapshot déjà chargé, statiques et
+  honnêtes pour les 4 autres), décisions clés datées, bouton "Demander à
+  Hermès". Pas de Lancer/Déléguer/Reporter : aucune route backend réelle pour
+  ces actions n'existe — ne pas fabriquer de boutons qui ne font rien.
+- Cartes de la liste "Projets" rendues cliquables (`→ Voir le détail`),
+  navigation par URL (`?view=projets&project=<id>`), bouton retour, touche
+  Échap (retourne à la liste si un projet est ouvert, sinon ferme le détail).
+- **Bug trouvé en testant** : le nouvel écran, comme `/jarvis-personal/project/:id`
+  directement, était bloqué par la même modale d'opt-in que j'avais déjà
+  corrigée ce soir sur `/jarvis-personal` — cause racine commune identifiée
+  (`isPersonalCockpit` en égalité stricte au lieu de préfixe). Corrigé une
+  fois pour toutes dans `App.tsx` (`startsWith` au lieu de `===`), ferme
+  cette classe de bug pour toute future route sous `/jarvis-personal/*`.
 
-**PROCHAINE ACTION** : après le Bloc 02, pas avant.
+**TESTS RÉELS (Playwright, 2026-08-29)** : `tsc --noEmit` propre. Liste
+Projets → 6 cartes réelles, clic → navigation → détail ADV avec vrais
+chiffres (MRR 0€, 19 abonnements, churn 0%) et vraies décisions datées ;
+détail Jarvis → alertes réelles ; détail Valéna (projet sans données live) →
+rendu propre ; bouton retour → liste ; ancienne route standalone
+`/jarvis-personal/project/adv` → modale ne bloque plus ; mobile 390×844 → 0
+scroll horizontal ; 0 erreur console sur l'ensemble. Captures dans le
+scratchpad de session.
+
+**CE QUI MANQUE** : test réel par Ruth (obligatoire avant `TESTED`) ; actions
+Lancer/Déléguer/Reporter (pas de backend réel, volontairement pas
+fabriquées) ; KPI live pour les projets non-ADV (Jarvis a des alertes
+réelles mais pas de vrais KPI chiffrés, les autres n'ont que des faits
+statiques).
+
+**RUTH_DECISION_REQUIRED** : aucune posée pour l'instant — le choix de ne pas
+réutiliser `ProjectDetailPage.tsx` dense a été signalé à Ruth en direct avant
+de coder, pas juste décidé seul.
+
+**PROCHAINE ACTION** : Ruth teste en conditions réelles → passage à `TESTED`.
 
 ---
 
