@@ -27,6 +27,22 @@ export interface ProjectData {
 }
 
 export const PROJECTS: Record<string, ProjectData> = {
+  'caisse-alliance-dreux': {
+    id: 'caisse-alliance-dreux',
+    name: 'Caisse Alliance de Dreux',
+    tagline: "Caisse événementielle associative (PWA)",
+    accent: '#34d399',
+    kpis: [],
+    decisions: [],
+  },
+  'ma-buvette-mobile': {
+    id: 'ma-buvette-mobile',
+    name: 'Ma Buvette Mobile',
+    tagline: "Caisse SaaS mobile pour associations et événements",
+    accent: '#22d3ee',
+    kpis: [],
+    decisions: [],
+  },
   edupilot: {
     id: 'edupilot',
     name: 'EduPilot',
