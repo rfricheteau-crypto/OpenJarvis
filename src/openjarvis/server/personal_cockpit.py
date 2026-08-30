@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover
 router = APIRouter(prefix="/v1/personal-cockpit", tags=["personal-cockpit"])
 hermes_chat_router = APIRouter(prefix="/api/hermes", tags=["hermes-chat"])
 logger = logging.getLogger("openjarvis.server.personal_cockpit")
+_HERMES_OBSERVER_TASKS: set[asyncio.Task[None]] = set()
 
 PERSONAL_ROOT = Path.home() / ".openjarvis" / "jarvis-personal"
 VOICE_DIR = PERSONAL_ROOT / "runtime" / "voice"
@@ -325,6 +326,14 @@ async def _observe_hermes_chat_request(message: str) -> None:
         )
     except Exception:
         logger.warning("Hermes observer failed; chat response remains unchanged", exc_info=True)
+
+
+def _start_hermes_chat_observer(message: str) -> asyncio.Task[None]:
+    """Keep the background observer alive until it has safely completed."""
+    task = asyncio.create_task(_observe_hermes_chat_request(message))
+    _HERMES_OBSERVER_TASKS.add(task)
+    task.add_done_callback(_HERMES_OBSERVER_TASKS.discard)
+    return task
 
 
 def _append_recent_trace_event(*, event_type: str, status: str, tool: str, notes: str) -> None:
@@ -2657,8 +2666,61 @@ _ADV_STATUS_WORD_FR: dict[str, str] = {
     "RESEARCH / CADRAGE INITIAL PREPARE": "RECHERCHE / CADRAGE INITIAL PRÉPARÉ",
 }
 
+# ADV_MASTER_CHECKLIST.md — suivi granulaire par section (A-Z, AA-AH, N1-N4),
+# plus détaillé que ADV_LAUNCH_BLOCKS.md mais pas organisé par les mêmes
+# blocs. Décision Ruth 2026-08-30 ("vas-y") : relier les sections pour
+# enrichir les blocs qui n'ont sinon aucun détail.
+ADV_MASTER_CHECKLIST_PATH = Path.home() / "ADV-App" / "ADV_MASTER_CHECKLIST.md"
+_ADV_CHECKLIST_SECTION_RE = re.compile(r"(?m)^##\s+([A-Z][A-Z0-9]*)\.\s*(.+?)\s*$")
+_ADV_CHECKLIST_ITEM_RE = re.compile(r"(?m)^-\s*\[([ x~>!?])\]\s*(.+)$", re.IGNORECASE)
 
-def _parse_adv_launch_blocks(text: str) -> list[dict[str, Any]]:
+# Correspondance éditoriale, pas une donnée du fichier source. AA/AB/AC/AH
+# sont explicitement labellisées "(Block N)" dans ADV_MASTER_CHECKLIST.md
+# lui-même — le reste est un rapprochement par thème (nom de section vs
+# "Includes:" du bloc), fait une fois ici, pas recalculé par heuristique à
+# chaque lecture. Sections volontairement non mappées (A, B, C, K, U, V, X,
+# Z, AE, AF) : trop transverses ou ambiguës pour attribuer à un seul bloc
+# sans risquer une fausse attribution.
+_ADV_CHECKLIST_SECTION_TO_BLOCK: dict[str, str] = {
+    "D": "1", "E": "1", "F": "1", "N": "1",
+    "G": "2", "L": "2",
+    "H": "3", "I": "3",
+    "M": "4",
+    "AD": "4b", "N1": "4b", "N2": "4b", "N4": "4b", "O": "4b",
+    "J": "5", "P": "5", "T": "5",
+    "S": "6",
+    "N3": "6b",
+    "Q": "7", "R": "7",
+    "W": "9",
+    "Y": "10",
+    "AA": "11",
+    "AB": "12",
+    "AC": "13",
+    "AH": "14",
+}
+
+
+def _parse_adv_master_checklist(text: str) -> dict[str, dict[str, list[str]]]:
+    """{lettre_section: {done: [...], todo: [...]}}. [x] = fait ; [~]/[ ]/[>]/[!]/[?]
+    tous comptés comme pas fait — pas de hiérarchie inventée entre ces nuances,
+    juste fait vs pas fait."""
+    headers = list(_ADV_CHECKLIST_SECTION_RE.finditer(text))
+    out: dict[str, dict[str, list[str]]] = {}
+    for i, header in enumerate(headers):
+        letter = header.group(1)
+        body_start = header.end()
+        body_end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
+        body = text[body_start:body_end]
+        done: list[str] = []
+        todo: list[str] = []
+        for m in _ADV_CHECKLIST_ITEM_RE.finditer(body):
+            marker, item_text = m.group(1).lower(), m.group(2).strip()
+            (done if marker == "x" else todo).append(item_text)
+        out[letter] = {"done": done, "todo": todo}
+    return out
+
+
+def _parse_adv_launch_blocks(text: str, checklist_by_section: dict[str, dict[str, list[str]]] | None = None) -> list[dict[str, Any]]:
     """Parse ADV_LAUNCH_BLOCKS.md — format libre, pas le format canonique.
     Aucun statut/pourcentage inventé : le % vient uniquement du compte réel
     de cases [x]/[ ] quand elles existent ; sinon pct=None et le texte de
@@ -2681,6 +2743,16 @@ def _parse_adv_launch_blocks(text: str) -> list[dict[str, Any]]:
         done_items = [m.strip() for m in _ADV_CHECKED_RE.findall(body)]
         todo_items = [m.strip() for m in _ADV_UNCHECKED_RE.findall(body)]
 
+        if checklist_by_section:
+            for letter, mapped_num in _ADV_CHECKLIST_SECTION_TO_BLOCK.items():
+                if mapped_num != num:
+                    continue
+                section = checklist_by_section.get(letter)
+                if not section:
+                    continue
+                done_items.extend(section["done"])
+                todo_items.extend(section["todo"])
+
         status_note = ""
         status_matches = list(_ADV_STATUS_LINE_RE.finditer(body))
         if status_matches:
@@ -2692,14 +2764,20 @@ def _parse_adv_launch_blocks(text: str) -> list[dict[str, Any]]:
         total = len(done_items) + len(todo_items)
         pct = round(100 * len(done_items) / total) if total else None
 
+        def _join_capped(items: list[str], cap: int = 20) -> str:
+            if not items:
+                return ""
+            shown = " ; ".join(items[:cap])
+            return shown if len(items) <= cap else f"{shown} ; … (+{len(items) - cap} autres)"
+
         blocks.append({
             "num": num,
             "name": _ADV_NAME_FR.get(name, name),
             "objectif": " · ".join(includes_items_fr[:8]),
             "status": None,
             "status_note": status_note,
-            "existe": " ; ".join(done_items) if done_items else "",
-            "manque": " ; ".join(todo_items) if todo_items else "",
+            "existe": _join_capped(done_items),
+            "manque": _join_capped(todo_items),
             "decision": "",
             "next_action": "",
             "pct": pct,
@@ -2772,7 +2850,12 @@ async def get_project_blocks(project_id: str):
         if not path.exists():
             return {"project_id": project_id, "tracked": False, "source_path": None, "blocks": []}
         try:
-            blocks = _parse_adv_launch_blocks(path.read_text(encoding="utf-8"))
+            checklist_by_section = None
+            if ADV_MASTER_CHECKLIST_PATH.exists():
+                checklist_by_section = _parse_adv_master_checklist(
+                    ADV_MASTER_CHECKLIST_PATH.read_text(encoding="utf-8")
+                )
+            blocks = _parse_adv_launch_blocks(path.read_text(encoding="utf-8"), checklist_by_section)
         except Exception:
             logger.exception("get_project_blocks failed for adv")
             return {"project_id": project_id, "tracked": False, "source_path": str(path), "blocks": []}
@@ -3142,7 +3225,7 @@ async def hermes_validate(request_body: HermesValidationRequest):
 @router.post("/chat")
 async def hermes_chat(request_body: HermesChatRequest, request: Request):
     """Hermes conversation route with local/OpenRouter/OpenAI routing."""
-    asyncio.create_task(_observe_hermes_chat_request(request_body.message))
+    _start_hermes_chat_observer(request_body.message)
     config = _hermes_chat_config()
     runtime = _hermes_chat_runtime_summary()
     engine_mode = request_body.engine_mode
