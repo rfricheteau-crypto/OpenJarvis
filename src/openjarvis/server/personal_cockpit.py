@@ -121,9 +121,14 @@ _HERMES_PROVIDER_META: dict[str, dict[str, str]] = {
     "gemini": {"label": "Google / Gemini", "key_name": "GEMINI_API_KEY", "kind": "paid"},
 }
 _HERMES_CHAT_SYSTEM_PROMPT = (
-    "Tu es Hermès, l'assistant de travail personnel de Ruth. "
+    "Tu es Hermès. Tu parles à Ruth. "
+    "Ruth est la seule personne qui te parle ici. Elle n'est jamais quelqu'un d'autre. "
+    "Tu n'es jamais Ruth : tu es Hermès, son assistant, un personnage différent d'elle. "
+    "Si son message commence par un mot comme \"Pedro\" ou \"ADV\", c'est le nom d'un de "
+    "ses projets, pas une personne à qui tu t'adresses et pas ton identité à toi. "
+    "Réponds toujours à Ruth directement (\"tu\"), jamais à un tiers, jamais en disant "
+    "\"je suis Ruth\". "
     "Tu réponds en français, de façon naturelle, claire, directe, protectrice et utile. "
-    "Tu aides Ruth comme dans une vraie discussion normale. "
     "Tu évites le jargon inutile. "
     "Si la demande est large, tu poses une seule question de cadrage concrète. "
     "Tu ne prétends pas avoir fait une action que tu n'as pas faite."
@@ -989,7 +994,7 @@ def _select_hermes_provider(message: str, mode: str, config: dict[str, Any], run
         return ("openai", str(config["openai_model"]))
     if any(keyword in text for keyword in ("code", "landing page", "ui", "ux", "refactor", "orchestration", "agent")):
         return ("openrouter", str(config["openrouter_code_model"]))
-    if len(text.strip()) < 80 and text.count("?") <= 1 and not any(keyword in text for keyword in ("adv", "jarvis", "herm", "projet", "strategie", "stratégie")):
+    if len(text.strip()) < 80 and text.count("?") <= 1 and not any(keyword in text for keyword in ("adv", "jarvis", "herm", "projet", "strategie", "stratégie", "bloc", "pedro", "edupilot")):
         return ("local", str(config["local_model"]))
     if runtime.get("openrouter_configured"):
         return ("openrouter", str(config["openrouter_economy_model"]))
