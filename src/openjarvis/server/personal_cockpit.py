@@ -2987,6 +2987,44 @@ async def hermes_validate(request_body: HermesValidationRequest):
                 )
             except Exception as exc:  # pragma: no cover - runtime bridge can be absent.
                 core_warning = f"Approbation délégation Hermès partielle : {exc}"
+
+            # Exécution réelle — décision Ruth explicite 2026-08-30 ("JE VEUX
+            # UNE EXECUTION REELLE"). Uniquement pour les validations créées
+            # par /hermes/prepare-execution (source dédiée) : ne touche pas
+            # les autres flux d'approbation existants (mail, cockpit...).
+            # execute_approved_agent_via_core (Codex) refuse tout seul si
+            # l'approbation/le contexte ne sont pas prêts — pas de garde
+            # supplémentaire nécessaire ici, mais on ne l'appelle que dans
+            # le cas prévu pour rester prévisible.
+            if pending.get("source") == "mission_prepare_execution":
+                try:
+                    from hermes_core import execute_approved_agent_via_core
+                    exec_result = execute_approved_agent_via_core(PERSONAL_ROOT)
+                    if exec_result.get("status") == "executed":
+                        result_summary = str(exec_result.get("result_summary") or result_summary)
+                        mission = _load_json(CURRENT_MISSION_PATH) or {}
+                        block_ctx = (mission.get("project_context") or {}).get("block") or {}
+                        project_id = (mission.get("project_context") or {}).get("project_id")
+                        if project_id and block_ctx.get("num"):
+                            try:
+                                pb = _project_blocks_module()
+                                current_block = pb.get_block(project_id, block_ctx["num"])
+                                if current_block:
+                                    pb.update_block_status(
+                                        project_id,
+                                        block_ctx["num"],
+                                        new_status=current_block.get("status") or "IN_PROGRESS",
+                                        evidence=f"Consultation agent réelle (approuvée par Ruth) : {result_summary[:300]}",
+                                        actor="hermes",
+                                    )
+                            except Exception:
+                                logger.exception("update_block_status failed after real execution")
+                    else:
+                        core_warning = (core_warning + " " if core_warning else "") + f"Exécution : {exec_result.get('status')}"
+                except Exception as exc:
+                    logger.exception("execute_approved_agent_via_core failed")
+                    core_warning = (core_warning + " " if core_warning else "") + f"Exécution réelle impossible : {exc}"
+
             resolved = resolve_validation_via_core(
                 PERSONAL_ROOT,
                 resolution="approved",
