@@ -164,7 +164,7 @@ contournement côté frontend entre-temps.
 
 **OBJECTIF** : écran de détail par projet — risques, coûts, contexte technique, Lancer/Déléguer/Reporter réels.
 
-**STATUT GLOBAL** : `TESTED` — construit et testé par Playwright le 2026-08-29, **testé en direct par Ruth le 2026-08-30** (Projets → Pedro/ADV → clic sur un bloc → détail) : **"NON TOUT EST OK"**, aucune correction demandée.
+**STATUT GLOBAL** : `TESTED` — construit et testé par Playwright le 2026-08-29, **testé en direct par Ruth le 2026-08-30** (Projets → Pedro/ADV → clic sur un bloc → détail) : **"NON TOUT EST OK"**, aucune correction demandée. **Confirmé une seconde fois le 2026-08-30** après ajout d'EduPilot, Caisse Alliance de Dreux et Ma Buvette Mobile au registre + leurs `PROJECT_BUILD_MAP.md` audités et branchés — Ruth : **"TOUT EST OK"**.
 
 **AJOUT — Blocs A→Z réels (2026-08-29)** : Ruth a demandé la visibilité des
 blocs de construction A→Z à l'intérieur de chaque projet (pas une nouvelle
