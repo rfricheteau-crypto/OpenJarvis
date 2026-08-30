@@ -94,6 +94,25 @@ function cleanText(value: string | undefined | null, fallback: string): string {
   return text || fallback;
 }
 
+// Les champs de bloc viennent tels quels de PROJECT_BUILD_MAP.md (markdown
+// écrit par des humains/agents) — `` `code` `` et `**gras**` doivent être
+// stylés, pas affichés en texte brut avec les astérisques/backticks visibles.
+function renderInlineMarkdown(text: string): ReactNode {
+  const parts: ReactNode[] = [];
+  const regex = /\*\*(.+?)\*\*|`([^`]+)`/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    if (match[1] !== undefined) parts.push(<strong key={key++}>{match[1]}</strong>);
+    else if (match[2] !== undefined) parts.push(<code key={key++} className="g-inline-code">{match[2]}</code>);
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
+
 function buildViewModel(snapshot: PersonalCockpitSnapshot | null): ViewModel {
   const decisions = (snapshot?.pending_validations ?? []).slice(0, 3).map((item) => ({
     project: cleanText(item.project, 'RuthOS'),
@@ -1309,14 +1328,14 @@ function BlockDetail({
           <div className="g-detail-heading">
             <span>Bloc {block.num} · {project.name}</span>
             <h1 id="block-detail-title">{block.name}</h1>
-            {block.objectif ? <p>{block.objectif}</p> : null}
+            {block.objectif ? <p>{renderInlineMarkdown(block.objectif)}</p> : null}
           </div>
 
           <div className="g-stat-grid">
             <div className="g-stat">
               <span>Avancement</span>
               <strong>{meta.pct !== null ? `${meta.pct}%` : '—'}</strong>
-              {block.status_note ? <em>{block.status_note}</em> : null}
+              {block.status_note ? <em>{renderInlineMarkdown(block.status_note)}</em> : null}
             </div>
             <div className="g-stat">
               <span>Statut</span>
@@ -1328,7 +1347,7 @@ function BlockDetail({
             {rows.map((row) => (
               <div className="g-decision-item" key={row.label} style={{ display: 'block' }}>
                 <span style={{ display: 'block', marginBottom: 4 }}>{row.label}</span>
-                <strong style={{ color: row.muted ? 'var(--d-muted)' : undefined, fontWeight: 400 }}>{row.value}</strong>
+                <strong style={{ color: row.muted ? 'var(--d-muted)' : undefined, fontWeight: 400 }}>{renderInlineMarkdown(row.value)}</strong>
               </div>
             ))}
           </div>
@@ -1336,7 +1355,7 @@ function BlockDetail({
           {block.next_action ? (
             <div className="g-pending-action" style={{ marginTop: 20 }}>
               <span>Prochaine action de ce bloc</span>
-              <strong>{block.next_action}</strong>
+              <strong>{renderInlineMarkdown(block.next_action)}</strong>
             </div>
           ) : null}
 
@@ -1922,6 +1941,7 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-detail-subheading{margin:26px 0 12px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#aeb9e8}
 .g-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.g-stat{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:14px;padding:14px}.g-stat span{display:block;font-size:11px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.06em}.g-stat strong{display:block;margin-top:4px;font-size:19px;color:var(--d-text)}.g-stat em{display:block;margin-top:2px;font-size:11px;font-style:normal;color:var(--d-muted)}
 .g-decision-list{display:grid;gap:10px}.g-decision-item{display:flex;gap:12px;align-items:baseline}.g-decision-item span{flex-shrink:0;font-size:11px;color:var(--d-muted);font-variant-numeric:tabular-nums}.g-decision-item strong{font-weight:500;font-size:13.5px;color:var(--d-text)}
+.g-inline-code{background:rgba(148,163,184,.14);border:1px solid rgba(148,163,184,.22);border-radius:5px;padding:1px 5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em;color:#c7d2fe}
 .g-hermes-cta{display:inline-flex;align-items:center;gap:8px;margin-top:28px;padding:11px 18px;border-radius:12px;border:1px solid rgba(167,139,250,.35);background:rgba(167,139,250,.14);color:#c4b5fd;font-size:13px;cursor:pointer}.g-hermes-cta:hover{background:rgba(167,139,250,.22)}
 .g-blocks-loading{color:var(--d-muted);font-size:13px;margin:0}
 .g-block-list{display:grid;gap:8px}
