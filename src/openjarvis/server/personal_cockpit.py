@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import re
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 import logging
@@ -1030,22 +1029,48 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def _load_jsonl_tail(path: Path, limit: int) -> list[dict[str, Any]]:
+    """Return recent JSONL records without parsing an unbounded history file.
+
+    Voice sessions are append-only and can grow very large.  The cockpit only
+    renders a small recent window, so walking the full file makes the UI slower
+    as history grows.  Read fixed-size blocks from the end instead.
+    """
     if not path.exists():
         return []
-    rows: deque[dict[str, Any]] = deque(maxlen=limit)
+    if limit <= 0:
+        return []
+    rows: list[dict[str, Any]] = []
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            position = handle.tell()
+            remainder = b""
+            while position > 0 and len(rows) < limit:
+                read_size = min(8192, position)
+                position -= read_size
+                handle.seek(position)
+                chunk = handle.read(read_size) + remainder
+                lines = chunk.split(b"\n")
+                remainder = lines[0]
+                for raw_line in reversed(lines[1:]):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line.decode("utf-8")))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if len(rows) == limit:
+                        break
+            if len(rows) < limit and remainder.strip():
                 try:
-                    rows.append(json.loads(line))
-                except Exception:
-                    continue
+                    rows.append(json.loads(remainder.strip().decode("utf-8")))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    pass
     except Exception:
         return []
-    return list(rows)
+    rows.reverse()
+    return rows
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -2591,6 +2616,9 @@ async def receive_adv_snapshot(request: Request):
 PROJECT_BUILD_MAP_PATHS: dict[str, Path] = {
     "pedro": Path.home() / "Pedro-OS" / "PROJECT_BUILD_MAP.md",
     "jarvis": Path.home() / "Jarvis" / "OpenJarvis" / "PROJECT_BUILD_MAP.md",
+    "edupilot": Path.home() / "EduPilot" / "PROJECT_BUILD_MAP.md",
+    "caisse-alliance-dreux": Path.home() / "caisse-alliance-dreux" / "PROJECT_BUILD_MAP.md",
+    "ma-buvette-mobile": Path.home() / "ma-buvette-mobile" / "PROJECT_BUILD_MAP.md",
 }
 
 # ADV n'a pas de PROJECT_BUILD_MAP.md au format canonique — il a son propre
