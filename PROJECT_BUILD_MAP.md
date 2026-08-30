@@ -164,7 +164,7 @@ contournement côté frontend entre-temps.
 
 **OBJECTIF** : écran de détail par projet — risques, coûts, contexte technique, Lancer/Déléguer/Reporter réels.
 
-**STATUT GLOBAL** : `READY_FOR_TEST` — construit et testé par Playwright ce soir (2026-08-29, sur demande directe de Ruth), pas encore testé en direct par elle.
+**STATUT GLOBAL** : `TESTED` — construit et testé par Playwright le 2026-08-29, **testé en direct par Ruth le 2026-08-30** (Projets → Pedro/ADV → clic sur un bloc → détail) : **"NON TOUT EST OK"**, aucune correction demandée.
 
 **AJOUT — Blocs A→Z réels (2026-08-29)** : Ruth a demandé la visibilité des
 blocs de construction A→Z à l'intérieur de chaque projet (pas une nouvelle
@@ -235,7 +235,7 @@ statiques).
 réutiliser `ProjectDetailPage.tsx` dense a été signalé à Ruth en direct avant
 de coder, pas juste décidé seul.
 
-**PROCHAINE ACTION** : Ruth teste en conditions réelles → passage à `TESTED`.
+**PROCHAINE ACTION** : aucune urgente — Bloc 03 `TESTED`. Reste ouvert si Ruth le souhaite : traduire le détail des items de checklist ADV (actuellement laissé en anglais, décision explicite 2026-08-30) ; enrichir le Bloc 8 (aucune correspondance checklist trouvée).
 
 ---
 
