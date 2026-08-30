@@ -27,6 +27,16 @@ export interface ProjectData {
 }
 
 export const PROJECTS: Record<string, ProjectData> = {
+  edupilot: {
+    id: 'edupilot',
+    name: 'EduPilot',
+    tagline: "SaaS éducatif premium",
+    accent: '#a78bfa',
+    kpis: [],
+    decisions: [
+      { text: "B4-01 (Atelier des Nombres) validé par Ruth, conditionnellement", date: "2026-08-28" },
+    ],
+  },
   pedro: {
     id: 'pedro',
     name: 'Pedro',
