@@ -372,6 +372,7 @@ export interface ProjectBlock {
   manque: string;
   decision: string;
   next_action: string;
+  pct: number | null;
 }
 
 export interface ProjectBlocksResponse {

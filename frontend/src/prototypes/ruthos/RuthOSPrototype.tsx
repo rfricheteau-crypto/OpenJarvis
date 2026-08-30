@@ -1166,7 +1166,7 @@ function ProjectDetail({
             ) : (
               <div className="g-block-list">
                 {blocks.map((block) => {
-                  const meta = blockStatusMeta(block.status);
+                  const meta = blockStatusMeta(block.status, block.pct);
                   const c = STATUS_COLORS[meta.status];
                   return (
                     <button
@@ -1185,7 +1185,7 @@ function ProjectDetail({
                         </span>
                       </span>
                       <span className="g-block-pct">{meta.pct !== null ? `${meta.pct}%` : '—'}</span>
-                      <StatusPill status={meta.status} label={block.status ?? 'inconnu'} />
+                      <StatusPill status={meta.status} label={block.status ?? cleanText(block.status_note, 'à consulter')} />
                       <ChevronRight size={14} className="g-block-chev" />
                     </button>
                   );
@@ -1306,7 +1306,7 @@ function BlockDetail({
     );
   }
 
-  const meta = blockStatusMeta(block.status);
+  const meta = blockStatusMeta(block.status, block.pct);
   const rows: Array<{ label: string; value: string; muted?: boolean }> = [
     { label: 'Existe', value: cleanText(block.existe, 'Rien de renseigné.') },
     { label: 'Manque', value: cleanText(block.manque, 'Rien de renseigné.'), muted: true },
@@ -1321,7 +1321,7 @@ function BlockDetail({
           <button type="button" className="d-ghost-btn" onClick={onBack}>
             <ArrowLeft size={15} /> Retour aux blocs {project.name}
           </button>
-          <span className="d-status-line"><i className="d-dot" /> {block.status ?? 'statut inconnu'}</span>
+          <span className="d-status-line"><i className="d-dot" /> {block.status ?? cleanText(block.status_note, 'statut non précisé')}</span>
         </div>
 
         <section className="g-detail" aria-labelledby="block-detail-title">
@@ -1339,7 +1339,7 @@ function BlockDetail({
             </div>
             <div className="g-stat">
               <span>Statut</span>
-              <strong><StatusPill status={meta.status} label={block.status ?? 'inconnu'} /></strong>
+              <strong><StatusPill status={meta.status} label={block.status ?? cleanText(block.status_note, 'à consulter')} /></strong>
             </div>
           </div>
 

@@ -1,5 +1,6 @@
 """Personal Jarvis cockpit routes backed by jarvis-personal runtime files."""
 
+import asyncio
 import hashlib
 import json
 import os
@@ -300,6 +301,30 @@ def _hermes_core_delegation_api():
     from hermes_core import record_delegation_result_via_core
 
     return record_delegation_result_via_core
+
+
+def _hermes_core_observer_api():
+    if str(PERSONAL_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PERSONAL_ROOT))
+    from hermes_core import orchestrate_request_via_core
+
+    return orchestrate_request_via_core
+
+
+async def _observe_hermes_chat_request(message: str) -> None:
+    """Journalise un plan Hermès sans perturber ni modifier la conversation."""
+    try:
+        observe = _hermes_core_observer_api()
+        await asyncio.to_thread(
+            observe,
+            PERSONAL_ROOT,
+            raw_request=message,
+            input_mode="text",
+            source="hermes_chat_observer",
+            observation_only=True,
+        )
+    except Exception:
+        logger.warning("Hermes observer failed; chat response remains unchanged", exc_info=True)
 
 
 def _append_recent_trace_event(*, event_type: str, status: str, tool: str, notes: str) -> None:
@@ -2559,6 +2584,128 @@ PROJECT_BUILD_MAP_PATHS: dict[str, Path] = {
     "jarvis": Path.home() / "Jarvis" / "OpenJarvis" / "PROJECT_BUILD_MAP.md",
 }
 
+# ADV n'a pas de PROJECT_BUILD_MAP.md au format canonique — il a son propre
+# suivi par blocs, plus ancien (mars-mai 2026), avec un format libre
+# (sections "Includes:", cases à cocher [x]/[ ], lignes "**Statut** : ...").
+# Décision Ruth 2026-08-30 : le rendre lisible par RuthOS via un second
+# parseur, sans réécrire ni migrer le fichier source (contenu business réel).
+ADV_LAUNCH_BLOCKS_PATH = Path.home() / "ADV-App" / "ADV_LAUNCH_BLOCKS.md"
+_ADV_BLOCK_HEADER_RE = re.compile(r"(?m)^#{2,3}\s*Block\s+(\d+[a-z]?)\s*—\s*(.+?)\s*$")
+_ADV_STATUS_LINE_RE = re.compile(
+    r"(?m)^\*\*((?:Statut|Audit status)[^*\n]*)\*\*\s*$"
+    r"|^\*\*(?:Statut|Audit status)[^*\n]*\*\*\s*:?\s*(.+)$"
+)
+_ADV_STATUS_PREFIX_RE = re.compile(r"^(?:Statut|Audit status)\s*(?:\([^)]*\))?\s*:?\s*", re.IGNORECASE)
+_ADV_CHECKED_RE = re.compile(r"(?m)^-\s*\[x\]\s*(.+)$", re.IGNORECASE)
+_ADV_UNCHECKED_RE = re.compile(r"(?m)^-\s*\[\s\]\s*(.+)$")
+_ADV_INCLUDES_RE = re.compile(r"(?m)^Includes:\s*\n((?:^-\s*.+\n?)+)")
+
+# ADV_LAUNCH_BLOCKS.md est en anglais (écrit avant que RuthOS ne devienne
+# entièrement en français) — traduction d'affichage uniquement, appliquée ici,
+# fichier source jamais modifié. Ruth, 2026-08-30 : "fais en sorte que ce soit
+# en français dans le projet ADV pour les blocs".
+_ADV_NAME_FR: dict[str, str] = {
+    "Product core": "Cœur produit",
+    "Billing and credits": "Facturation et crédits",
+    "Referral and upsells": "Parrainage et ventes incitatives",
+    "Workflows and automation": "Workflows et automatisation",
+    "Security and reliability": "Sécurité et fiabilité",
+    "Legal and compliance": "Juridique et conformité",
+    "KPI / accounting / founder control": "KPI / comptabilité / pilotage fondatrice",
+    "Website / landing / TikTok / launch": "Site web / landing / TikTok / lancement",
+    "Stores and release": "Stores et publication",
+    "Post-launch operations": "Opérations post-lancement",
+}
+_ADV_ITEM_FR: dict[str, str] = {
+    "auth": "authentification", "clients": "clients", "quotes": "devis", "invoices": "factures",
+    "PDF": "PDF", "document access": "accès aux documents", "voice UX core": "cœur UX vocal",
+    "subscriptions": "abonnements", "trial": "essai gratuit", "packs": "packs", "credits": "crédits",
+    "portal": "portail client", "pricing coherence": "cohérence tarifaire",
+    "referral attach": "rattachement parrainage", "reward generation": "génération de récompense",
+    "reward claim": "réclamation de récompense", "free month": "mois gratuit",
+    "Memory Pro": "Memory Pro", "upsell surfaces": "surfaces de vente incitative",
+    "n8n workflows": "workflows n8n", "numbering": "numérotation",
+    "decrement blocks": "blocs de décrément", "PDF workflow": "workflow PDF",
+    "archive workflow": "workflow d'archivage", "send workflows": "workflows d'envoi",
+    "monitoring workflows": "workflows de supervision", "Firestore rules": "règles Firestore",
+    "backend-only sensitive writes": "écritures sensibles backend uniquement",
+    "Stripe webhook validation": "validation des webhooks Stripe",
+    "request signing": "signature des requêtes", "anti-abuse": "anti-abus",
+    "backups": "sauvegardes", "restore": "restauration", "monitoring": "supervision",
+    "alerting": "alertes", "legal notices": "mentions légales", "CGV": "CGV",
+    "legal screens/pages": "écrans/pages juridiques",
+    "PDF legal mentions": "mentions légales sur les PDF",
+    "data/retention clarity": "clarté sur les données/rétention",
+    "future e-invoicing awareness": "anticipation de la facturation électronique",
+    "founder dashboard": "tableau de bord fondatrice", "KPI definitions": "définition des KPI",
+    "accounting structure": "structure comptable", "monthly tracking": "suivi mensuel",
+    "incident visibility": "visibilité des incidents", "website": "site web",
+    "landing pages": "landing pages", "pricing page": "page tarifs",
+    "CTA strategy": "stratégie de CTA", "FAQ": "FAQ", "demo assets": "supports de démo",
+    "TikTok system": "système TikTok", "launch sequence": "séquence de lancement",
+    "conversion KPI": "KPI de conversion", "iOS/Android builds": "builds iOS/Android",
+    "screenshots": "captures d'écran", "descriptions": "descriptions",
+    "compliance declarations": "déclarations de conformité",
+    "review materials": "supports pour la revue",
+    "testflight/internal testing": "testflight/tests internes", "support": "support",
+    "incident triage": "tri des incidents", "FAQ updates": "mises à jour FAQ",
+    "weekly reviews": "revues hebdomadaires", "launch week support": "support semaine de lancement",
+    "feedback loops": "boucles de retour utilisateur",
+}
+_ADV_STATUS_WORD_FR: dict[str, str] = {
+    "Partial": "Partiel",
+    "RESEARCH / CADRAGE INITIAL PREPARE": "RECHERCHE / CADRAGE INITIAL PRÉPARÉ",
+}
+
+
+def _parse_adv_launch_blocks(text: str) -> list[dict[str, Any]]:
+    """Parse ADV_LAUNCH_BLOCKS.md — format libre, pas le format canonique.
+    Aucun statut/pourcentage inventé : le % vient uniquement du compte réel
+    de cases [x]/[ ] quand elles existent ; sinon pct=None et le texte de
+    statut brut (s'il existe) est transmis tel quel dans status_note."""
+    headers = list(_ADV_BLOCK_HEADER_RE.finditer(text))
+    blocks: list[dict[str, Any]] = []
+    for i, header in enumerate(headers):
+        num, name = header.group(1), header.group(2).strip()
+        body_start = header.end()
+        body_end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
+        body = text[body_start:body_end]
+
+        includes_match = _ADV_INCLUDES_RE.search(body)
+        includes_items = (
+            [line.strip(" -\t") for line in includes_match.group(1).splitlines() if line.strip()]
+            if includes_match
+            else []
+        )
+        includes_items_fr = [_ADV_ITEM_FR.get(item, item) for item in includes_items]
+        done_items = [m.strip() for m in _ADV_CHECKED_RE.findall(body)]
+        todo_items = [m.strip() for m in _ADV_UNCHECKED_RE.findall(body)]
+
+        status_note = ""
+        status_matches = list(_ADV_STATUS_LINE_RE.finditer(body))
+        if status_matches:
+            last = status_matches[-1]
+            raw = (last.group(1) or last.group(2) or "").strip()
+            raw = _ADV_STATUS_PREFIX_RE.sub("", raw).strip()
+            status_note = _ADV_STATUS_WORD_FR.get(raw, raw)
+
+        total = len(done_items) + len(todo_items)
+        pct = round(100 * len(done_items) / total) if total else None
+
+        blocks.append({
+            "num": num,
+            "name": _ADV_NAME_FR.get(name, name),
+            "objectif": " · ".join(includes_items_fr[:8]),
+            "status": None,
+            "status_note": status_note,
+            "existe": " ; ".join(done_items) if done_items else "",
+            "manque": " ; ".join(todo_items) if todo_items else "",
+            "decision": "",
+            "next_action": "",
+            "pct": pct,
+        })
+    return blocks
+
 _BUILD_MAP_BLOCK_HEADER_RE = re.compile(r"(?m)^##\s*BLOCK\s+(\d+)\s*—\s*(.+?)\s*$")
 _BUILD_MAP_FIELDS = (
     "OBJECTIF",
@@ -2610,15 +2757,27 @@ def _parse_project_build_map(text: str) -> list[dict[str, Any]]:
             "manque": values.get("CE QUI MANQUE", ""),
             "decision": values.get("RUTH_DECISION_REQUIRED", ""),
             "next_action": values.get("PROCHAINE ACTION", ""),
+            "pct": None,
         })
     return blocks
 
 
 @router.get("/project-blocks/{project_id}")
 async def get_project_blocks(project_id: str):
-    """Blocs A-Z réels d'un projet, lus en direct depuis son PROJECT_BUILD_MAP.md.
+    """Blocs A-Z réels d'un projet, lus en direct depuis son fichier de suivi.
     Pas de cache : le fichier peut être mis à jour par Hermès/Claude/Codex entre
     deux ouvertures de l'écran."""
+    if project_id == "adv":
+        path = ADV_LAUNCH_BLOCKS_PATH
+        if not path.exists():
+            return {"project_id": project_id, "tracked": False, "source_path": None, "blocks": []}
+        try:
+            blocks = _parse_adv_launch_blocks(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.exception("get_project_blocks failed for adv")
+            return {"project_id": project_id, "tracked": False, "source_path": str(path), "blocks": []}
+        return {"project_id": project_id, "tracked": True, "source_path": str(path), "blocks": blocks}
+
     path = PROJECT_BUILD_MAP_PATHS.get(project_id)
     if path is None or not path.exists():
         return {"project_id": project_id, "tracked": False, "source_path": None, "blocks": []}
@@ -2983,6 +3142,7 @@ async def hermes_validate(request_body: HermesValidationRequest):
 @router.post("/chat")
 async def hermes_chat(request_body: HermesChatRequest, request: Request):
     """Hermes conversation route with local/OpenRouter/OpenAI routing."""
+    asyncio.create_task(_observe_hermes_chat_request(request_body.message))
     config = _hermes_chat_config()
     runtime = _hermes_chat_runtime_summary()
     engine_mode = request_body.engine_mode

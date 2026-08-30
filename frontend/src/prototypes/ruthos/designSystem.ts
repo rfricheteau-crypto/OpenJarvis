@@ -22,6 +22,36 @@ export function priorityToStatus(priority: string): StatusKey {
   return 'info';
 }
 
+// Conversion statut de bloc -> % — validée par Ruth (2026-08-29) : "conversion
+// simple", pas un calcul décoratif. Les 9 statuts sont ceux déjà en usage dans
+// CODEX_RUTH_OS/METHODE_PILOTAGE_PAR_BLOCS.md (ne pas en inventer d'autres).
+// BLOCKED/RUTH_DECISION_REQUIRED et BACKLOG n'ont volontairement pas de % :
+// une décision qui arrête un bloc, ou un bloc pas encore priorisé, ne sont pas
+// un pourcentage d'avancement.
+export const BLOCK_STATUS_META: Record<string, { pct: number | null; status: StatusKey }> = {
+  DONE: { pct: 100, status: 'active' },
+  TESTED: { pct: 90, status: 'active' },
+  READY_FOR_TEST: { pct: 75, status: 'info' },
+  NEEDS_REVIEW: { pct: 60, status: 'validation' },
+  CODEX_REVIEW_PENDING: { pct: 60, status: 'validation' },
+  IN_PROGRESS: { pct: 50, status: 'info' },
+  NOT_STARTED: { pct: 0, status: 'paused' },
+  BACKLOG: { pct: null, status: 'paused' },
+  BLOCKED: { pct: null, status: 'urgent' },
+  RUTH_DECISION_REQUIRED: { pct: null, status: 'urgent' },
+};
+
+// `explicitPct` sert les projets sans statut canonique (ex. ADV, dont le %
+// vient d'un vrai compte de cases [x]/[ ] côté backend) — jamais fabriqué ici,
+// juste transmis. La couleur dérive alors du % lui-même, pas d'un statut.
+export function blockStatusMeta(status: string | null, explicitPct?: number | null): { pct: number | null; status: StatusKey } {
+  if (status) return BLOCK_STATUS_META[status] ?? { pct: null, status: 'paused' };
+  if (explicitPct == null) return { pct: null, status: 'paused' };
+  if (explicitPct >= 100) return { pct: explicitPct, status: 'active' };
+  if (explicitPct > 0) return { pct: explicitPct, status: 'info' };
+  return { pct: explicitPct, status: 'paused' };
+}
+
 // Variables CSS communes à tout écran "Ruth OS 360°" (fond bleu nuit, cartes,
 // bordures). À poser sur le conteneur racine de l'écran :
 // <div className="ruthos-theme"> ... </div>
