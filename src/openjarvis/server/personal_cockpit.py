@@ -201,6 +201,14 @@ def _hermes_core_validation_api():
     return approve_delegation_via_core, cancel_validation_via_core, resolve_validation_via_core
 
 
+def _hermes_core_request_validation_api():
+    if str(PERSONAL_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PERSONAL_ROOT))
+    from hermes_core import request_validation_via_core
+
+    return request_validation_via_core
+
+
 def _current_hermes_validation() -> dict[str, Any]:
     core = _load_json(HERMES_CORE_STATE_PATH) or {}
     validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
@@ -2873,6 +2881,80 @@ async def hermes_codex_handoff_ack(request_body: HermesCodexHandoffAckRequest):
         "handoff": handoff,
         "warning": warning,
     }
+
+
+# Missions proposées vs approbation d'exécution — étape 5 du plan de
+# finition GO LIVE Hermès, décision Ruth 2026-08-30 (Option B) : "on ne
+# touche pas à la garantie qui protège — parler à Hermès ne doit jamais
+# créer automatiquement une approbation, même pour une mission sensible."
+# Deux espaces distincts :
+# - GET /hermes/proposed-mission : lecture seule, ce qu'Hermès a compris/
+#   préparé (project_context, agent recommandé) — jamais de validation créée.
+# - POST /hermes/prepare-execution : seul chemin qui crée une vraie
+#   validation (via request_validation_via_core, la policy VERT/ORANGE/ROUGE
+#   de Codex), et seulement si Ruth clique explicitement "Préparer
+#   l'exécution". Le bouton "Approuver" existant (_current_hermes_validation)
+#   la lit ensuite sans rien changer côté lui.
+CURRENT_MISSION_PATH = HERMES_DIR / "current_mission.json"
+CURRENT_AGENT_ROUTE_PATH = HERMES_DIR / "current_agent_route.json"
+
+
+@router.get("/hermes/proposed-mission")
+async def get_proposed_mission():
+    """Ce qu'Hermès a compris et préparé pour la dernière demande — lecture
+    seule, ne crée jamais de validation. C'est la garantie de l'étape 3
+    (observation_only) qui reste intacte : parler à Hermès ne déclenche
+    jamais d'approbation toute seule."""
+    mission = _load_json(CURRENT_MISSION_PATH) or {}
+    route = _load_json(CURRENT_AGENT_ROUTE_PATH) or {}
+    if not mission:
+        return {"has_mission": False, "mission": None, "route": None}
+    return {"has_mission": True, "mission": mission, "route": route}
+
+
+class PrepareExecutionRequest(BaseModel):
+    note: str = Field(default="", max_length=2000)
+
+
+@router.post("/hermes/prepare-execution")
+async def prepare_execution(request_body: PrepareExecutionRequest):
+    """Seul chemin qui crée une vraie validation à partir de la mission
+    proposée — jamais automatique, seulement sur clic explicite de Ruth."""
+    mission = _load_json(CURRENT_MISSION_PATH) or {}
+    if not mission:
+        raise HTTPException(status_code=409, detail="Aucune mission proposée à préparer pour exécution.")
+    if mission.get("status") not in ("mission_ready_not_executed",):
+        raise HTTPException(status_code=409, detail="Mission non prête (statut inattendu).")
+
+    route = _load_json(CURRENT_AGENT_ROUTE_PATH) or {}
+    lead = (route.get("route") or {}).get("lead") or {}
+    agent = lead.get("agent") or mission.get("recommended_agent") or "agent inconnu"
+    request_summary = mission.get("request_summary", "")
+    project_context = mission.get("project_context") or {}
+    block = project_context.get("block") or {}
+    project_id = project_context.get("project_id")
+
+    action_parts = [f"Déléguer à {agent}", f"demande : {request_summary}"]
+    if project_id:
+        action_parts.append(f"projet : {project_id}")
+    if block.get("num"):
+        action_parts.append(f"bloc {block['num']} — {block.get('name', '')}")
+    action = " ; ".join(action_parts)
+
+    try:
+        request_validation_via_core = _hermes_core_request_validation_api()
+        result = request_validation_via_core(
+            PERSONAL_ROOT,
+            action=action,
+            executable=None,
+            source="mission_prepare_execution",
+            prompt=request_body.note.strip() or f"Préparer l'exécution de la mission proposée : {request_summary}",
+        )
+    except Exception as exc:
+        logger.exception("prepare_execution failed")
+        raise HTTPException(status_code=500, detail=f"Impossible de préparer l'exécution : {exc}") from exc
+
+    return {"ok": True, "action": action, "validation": result}
 
 
 @hermes_chat_router.post("/validate")

@@ -259,6 +259,35 @@ export async function submitHermesValidation(
   return res.json();
 }
 
+// Missions proposées vs approbation d'exécution — étape 5, décision Ruth
+// 2026-08-30 (Option B) : lecture seule de ce qu'Hermès a compris/préparé,
+// jamais de validation créée juste en parlant. "Préparer l'exécution" est
+// le seul geste explicite qui en crée une (via l'endpoint POST).
+export interface ProposedMissionResponse {
+  has_mission: boolean;
+  mission: Record<string, any> | null;
+  route: Record<string, any> | null;
+}
+
+export async function fetchProposedMission(): Promise<ProposedMissionResponse> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes/proposed-mission`);
+  if (!res.ok) throw new Error(`Failed to fetch proposed mission: ${res.status}`);
+  return res.json();
+}
+
+export async function prepareExecution(note: string = ''): Promise<{ ok: boolean; action: string; validation: Record<string, any> }> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes/prepare-execution`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail?.detail || `Failed to prepare execution: ${res.status}`);
+  }
+  return res.json();
+}
+
 export type HermesAlertAction = 'fix' | 'create_task' | 'ignore';
 
 export interface HermesAlertActionResponse {

@@ -30,6 +30,8 @@ import {
   fetchPersonalCockpit,
   fetchAdvSnapshot,
   fetchProjectBlocks,
+  fetchProposedMission,
+  prepareExecution,
   sendPersonalCockpitChat,
   submitHermesValidation,
   type AdvSnapshot,
@@ -1408,6 +1410,23 @@ function VariantG({
   const [chatReply, setChatReply] = useState<string | null>(null);
   const [approving, setApproving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [proposedMission, setProposedMission] = useState<Record<string, any> | null>(null);
+  const [proposedRoute, setProposedRoute] = useState<Record<string, any> | null>(null);
+  const [preparingExecution, setPreparingExecution] = useState(false);
+
+  const refreshProposedMission = useCallback(async () => {
+    try {
+      const result = await fetchProposedMission();
+      setProposedMission(result.has_mission ? result.mission : null);
+      setProposedRoute(result.has_mission ? result.route : null);
+    } catch {
+      // Lecture seule, best-effort — ne bloque jamais la conversation.
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProposedMission();
+  }, [refreshProposedMission]);
 
   const handleSend = useCallback(async () => {
     const message = chatInput.trim();
@@ -1418,12 +1437,32 @@ function VariantG({
       setChatReply(result.reply);
       setChatInput('');
       if (result.warning) toast.warning(result.warning);
+      // L'observateur Hermès tourne en tâche de fond côté serveur — laisser
+      // un court délai avant de relire la mission proposée qu'il prépare.
+      setTimeout(() => void refreshProposedMission(), 900);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Envoi à Hermès impossible');
     } finally {
       setSending(false);
     }
-  }, [chatInput, sending]);
+  }, [chatInput, sending, refreshProposedMission]);
+
+  const handlePrepareExecution = useCallback(async () => {
+    if (preparingExecution) return;
+    setPreparingExecution(true);
+    try {
+      const result = await prepareExecution();
+      toast.success('Préparé — en attente de ton approbation dans "En attente"');
+      setProposedMission(null);
+      setProposedRoute(null);
+      await onRefresh?.();
+      void result;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Impossible de préparer l'exécution");
+    } finally {
+      setPreparingExecution(false);
+    }
+  }, [preparingExecution, onRefresh]);
 
   const handleApprove = useCallback(async () => {
     if (approving) return;
@@ -1506,6 +1545,31 @@ function VariantG({
               <p className="g-bubble-note">
                 <StatusPill status="validation" label={String(pendingCount)} /> Il y a aussi {pendingCount} décision{pendingCount > 1 ? 's' : ''} qui attend{pendingCount > 1 ? 'ent' : ''} ton avis.
               </p>
+            ) : null}
+            {proposedMission ? (
+              <div className="g-mission-card">
+                <span className="g-mission-eyebrow">Mission proposée — rien n'est lancé</span>
+                <p className="g-mission-summary">{cleanText(proposedMission.request_summary, 'Demande en cours')}</p>
+                {proposedMission.project_context?.status === 'resolved' ? (
+                  <p className="g-mission-context">
+                    Projet <strong>{proposedMission.project_context.project_id}</strong>
+                    {proposedMission.project_context.block ? (
+                      <> · bloc <strong>{proposedMission.project_context.block.num} — {proposedMission.project_context.block.name}</strong></>
+                    ) : null}
+                  </p>
+                ) : null}
+                <p className="g-mission-agent">
+                  Agent recommandé : <strong>{proposedRoute?.route?.lead?.agent ?? proposedMission.recommended_agent ?? 'à déterminer'}</strong>
+                </p>
+                <button
+                  type="button"
+                  className="g-mission-cta"
+                  onClick={() => void handlePrepareExecution()}
+                  disabled={preparingExecution}
+                >
+                  {preparingExecution ? 'Préparation…' : "Préparer l'exécution"}
+                </button>
+              </div>
             ) : null}
             <div className="g-bubble-input">
               <input
@@ -1924,6 +1988,14 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-bubble-detail{margin:0 0 14px;font-size:13px;color:var(--d-muted);line-height:1.5}
 .g-bubble-note{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#c3c9e6;background:rgba(139,92,246,.08);border:1px solid rgba(196,181,253,.25);border-radius:11px;padding:9px 12px;margin:0 0 16px}
 .g-bubble-cta{margin:2px 0 14px}
+.g-mission-card{margin-top:14px;padding:14px 16px;border-radius:14px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);text-align:left}
+.g-mission-eyebrow{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c4b5fd;margin-bottom:6px}
+.g-mission-summary{margin:0 0 6px;font-size:13.5px;color:var(--d-text)}
+.g-mission-context,.g-mission-agent{margin:0 0 4px;font-size:12px;color:var(--d-muted)}
+.g-mission-context strong,.g-mission-agent strong{color:var(--d-text);font-weight:500}
+.g-mission-cta{margin-top:8px;padding:8px 14px;border-radius:10px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.16);color:#c4b5fd;font-size:12.5px;cursor:pointer}
+.g-mission-cta:hover{background:rgba(167,139,250,.26)}
+.g-mission-cta:disabled{opacity:.6;cursor:not-allowed}
 .g-bubble-input{display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:4px;padding-top:14px;border-top:1px solid var(--d-card-border)}
 .g-bubble-input input{height:44px;border-radius:11px;border:1px solid var(--d-card-border);background:var(--d-bg);color:var(--d-text);padding:0 12px;font-size:13px}
 .g-send-btn{width:44px;height:44px;border:1px solid var(--d-card-border);border-radius:11px;background:transparent;color:var(--d-muted);display:grid;place-items:center}
