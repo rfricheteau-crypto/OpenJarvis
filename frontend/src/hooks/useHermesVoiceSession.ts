@@ -5,6 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Ne pas inventer d'endpoint — en particulier pas de POST /interrupt : le
 // barge-in est une conséquence du flux micro continu + VAD côté runtime, pas
 // une requête séparée. G ouvre/ferme la session ; le runtime pilote le tour.
+//
+// Comportement audio calqué EXACTEMENT sur le client de référence de Codex
+// (prototypes/hermes-webrtc-poc-v2/web/app.js, déjà testé par lui) après un
+// test humain réel (Ruth, 2026-08-31 23h15) qui a trouvé la voix "lente,
+// molle, ne comprend pas" : la première version d'ici ne réarmait jamais la
+// lecture audio après une coupure (user_speaking/barge_in_start), ni le
+// keepalive ping, ni la résilience aux états "disconnected" transitoires —
+// contrairement à app.js qui fait les trois.
 const V2_BASE_URL = 'http://127.0.0.1:8790';
 
 export type HermesVoiceRuntimeState =
@@ -42,6 +50,9 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
   const dcRef = useRef<RTCDataChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+  const pingTimerRef = useRef<number | null>(null);
+  const manualDisconnectRef = useRef(false);
   const onMessageRef = useRef(options.onMessage);
   const onDiagnosticRef = useRef(options.onDiagnostic);
 
@@ -56,7 +67,43 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
     onDiagnosticRef.current?.(message, level);
   }, []);
 
+  const setRemoteTrackEnabled = useCallback((enabled: boolean) => {
+    remoteStreamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = enabled;
+    });
+  }, []);
+
+  // Coupe le rendu local immédiatement (contrat, section barge-in) — le
+  // runtime pilote l'arrêt réel du tour côté serveur.
+  const cutRemoteAudio = useCallback(() => {
+    const el = audioElRef.current;
+    if (!el) return;
+    try {
+      el.pause();
+    } catch {}
+    el.muted = true;
+    setRemoteTrackEnabled(false);
+    el.srcObject = null;
+  }, [setRemoteTrackEnabled]);
+
+  // Réarme la lecture au tour suivant — sans ça, une seule coupure rend la
+  // voix silencieuse en permanence (bug trouvé au test humain du 2026-08-31).
+  const resumeRemoteAudio = useCallback(() => {
+    const el = audioElRef.current;
+    if (!el) return;
+    el.muted = false;
+    setRemoteTrackEnabled(true);
+    if (!el.srcObject && remoteStreamRef.current) {
+      el.srcObject = remoteStreamRef.current;
+    }
+    void el.play().catch(() => {});
+  }, [setRemoteTrackEnabled]);
+
   const teardown = useCallback(() => {
+    if (pingTimerRef.current != null) {
+      window.clearInterval(pingTimerRef.current);
+      pingTimerRef.current = null;
+    }
     try {
       dcRef.current?.close();
     } catch {}
@@ -67,13 +114,17 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
     pcRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    remoteStreamRef.current = null;
     if (audioElRef.current) {
-      audioElRef.current.pause();
+      try {
+        audioElRef.current.pause();
+      } catch {}
       audioElRef.current.srcObject = null;
     }
   }, []);
 
   const endSession = useCallback(() => {
+    manualDisconnectRef.current = true;
     teardown();
     setRuntimeState('idle');
     setDetail(null);
@@ -103,19 +154,22 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
       if (payload.type === 'event') {
         const name = typeof (payload as { name?: unknown }).name === 'string' ? (payload as { name: string }).name : 'unknown';
         emitDiagnostic(`voice_event:${name}`);
-        // Coupure locale immédiate du rendu audio — le runtime pilote l'arrêt
-        // réel du tour et la reprise d'écoute (contrat, section barge-in).
-        if ((name === 'user_speaking' || name === 'barge_in_start') && audioElRef.current) {
-          audioElRef.current.pause();
+        if (name === 'user_speaking' && audioElRef.current?.srcObject) {
+          cutRemoteAudio();
+        } else if (name === 'barge_in_start') {
+          cutRemoteAudio();
+        } else if (name === 'audio_play_start') {
+          resumeRemoteAudio();
         }
       }
     },
-    [emitDiagnostic],
+    [cutRemoteAudio, resumeRemoteAudio, emitDiagnostic],
   );
 
   const startSession = useCallback(
     async (sessionId: string) => {
       if (pcRef.current) return; // session déjà active — un seul bouton, pas de double ouverture
+      manualDisconnectRef.current = false;
       setError(null);
       setRuntimeState('connecting');
       try {
@@ -133,9 +187,41 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
         pc.ontrack = (event) => {
+          const [stream0] = event.streams;
+          if (!stream0 || stream0 === remoteStreamRef.current) return;
+          remoteStreamRef.current = stream0;
           if (!audioElRef.current) return;
-          audioElRef.current.srcObject = event.streams[0] ?? null;
+          audioElRef.current.srcObject = stream0;
           void audioElRef.current.play().catch(() => {});
+        };
+
+        // Résilience aux coupures ICE transitoires (Wi-Fi/local dev) —
+        // calqué sur app.js : "disconnected" laisse 2s de grâce avant de
+        // considérer la session vraiment perdue, "failed"/"closed" nettoient
+        // tout de suite. Sans ça une micro-coupure réseau tuait la session
+        // silencieusement, sans que G ne le signale.
+        pc.onconnectionstatechange = () => {
+          emitDiagnostic(`voice_connection_state:${pc.connectionState}`);
+          if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+            teardown();
+            setRuntimeState(manualDisconnectRef.current ? 'idle' : 'error');
+            if (!manualDisconnectRef.current) setError('Connexion vocale perdue.');
+            return;
+          }
+          if (pc.connectionState === 'disconnected') {
+            if (manualDisconnectRef.current) {
+              teardown();
+              setRuntimeState('idle');
+              return;
+            }
+            window.setTimeout(() => {
+              if (pcRef.current === pc && pc.connectionState === 'disconnected') {
+                teardown();
+                setRuntimeState('error');
+                setError('Connexion vocale perdue.');
+              }
+            }, 2000);
+          }
         };
 
         const dc = pc.createDataChannel('hermes-events');
@@ -143,6 +229,12 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         dc.onopen = () => {
           dc.send(JSON.stringify({ type: 'client-ready' }));
           emitDiagnostic('voice_data_channel_open');
+          // Keepalive facultatif côté contrat, mais présent dans le client de
+          // référence de Codex déjà validé — gardé pour rester sur un
+          // comportement prouvé plutôt qu'en inventer un nouveau.
+          pingTimerRef.current = window.setInterval(() => {
+            if (dcRef.current?.readyState === 'open') dcRef.current.send(`ping:${Date.now()}`);
+          }, 2000);
         };
         dc.onmessage = (event) => handleDataChannelMessage(event.data as string);
         dc.onerror = () => emitDiagnostic('voice_data_channel_error', 'error');
@@ -174,7 +266,12 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
     [emitDiagnostic, handleDataChannelMessage, teardown],
   );
 
-  useEffect(() => () => teardown(), [teardown]);
+  useEffect(() => {
+    return () => {
+      manualDisconnectRef.current = true;
+      teardown();
+    };
+  }, [teardown]);
 
   return {
     runtimeState,
