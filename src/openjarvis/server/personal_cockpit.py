@@ -2708,6 +2708,18 @@ async def get_project_blocks(project_id: str):
         return {"project_id": project_id, "tracked": False, "source_path": None, "blocks": []}
 
 
+def _safe_read_text(path: Path) -> str | None:
+    """Lecture protégée d'un fichier du vault Obsidian (iCloud) — un verrou
+    iCloud ponctuel (OSError: Resource deadlock avoided, Errno 11, incident
+    réel du 2026-08-31) ne doit jamais faire échouer tout un endpoint ni
+    contribuer à bloquer le serveur. None si illisible pour ce tour."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("Obsidian file read failed (skipped): %s", path)
+        return None
+
+
 @router.get("/adv-obsidian")
 async def get_adv_obsidian():
     """Return Obsidian context excerpts for the ADV cockpit (all tabs)."""
@@ -2719,15 +2731,18 @@ async def get_adv_obsidian():
     ]
     for key, path, max_len in simple_paths:
         if path.exists():
-            content = path.read_text(encoding="utf-8")
+            content = _safe_read_text(path)
+            if content is None:
+                continue
             result[key] = content[:max_len]
             result[key + "_path"] = str(path)
     # Codex update log — last ~1 500 chars (most recent entries)
     codex_log_path = OBSIDIAN_ROOT / "CODEX_RUTH_OS" / "07_LOG" / "UPDATE_LOG.md"
     if codex_log_path.exists():
-        content = codex_log_path.read_text(encoding="utf-8")
-        result["codex_log"] = content[-1800:] if len(content) > 1800 else content
-        result["codex_log_path"] = str(codex_log_path)
+        content = _safe_read_text(codex_log_path)
+        if content is not None:
+            result["codex_log"] = content[-1800:] if len(content) > 1800 else content
+            result["codex_log_path"] = str(codex_log_path)
     return result
 
 
