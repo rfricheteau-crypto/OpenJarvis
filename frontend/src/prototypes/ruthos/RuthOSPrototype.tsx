@@ -1399,7 +1399,11 @@ function ProjectDetail({
             className="g-hermes-cta"
             onClick={() =>
               onOpenHermes(
-                `Hermès, il faut regarder le projet ${project.name}. ${cleanText(project.tagline, '')}`.trim(),
+                // L'id littéral (ex. "caisse-alliance-dreux") est inclus exprès :
+                // hermes_core._project_context résout le projet par sous-chaîne
+                // exacte de cet id, pas par le nom affiché — trouvé en corrigeant
+                // ce bouton (2026-08-31), voir PROJECT_BUILD_MAP.md Bloc 03.
+                `Hermès, il faut regarder le projet ${project.name} (${project.id}). ${cleanText(project.tagline, '')}`.trim(),
               )
             }
           >
@@ -1531,7 +1535,9 @@ function BlockDetail({
               const objectif = cleanText(block.objectif, '');
               const nextAction = cleanText(block.next_action, '');
               const message = [
-                `Hermès, il faut travailler le projet ${project.name}, bloc ${block.num} — ${block.name}.`,
+                // Id littéral inclus (voir note ProjectDetail plus haut) —
+                // nécessaire pour que hermes_core résolve le bon project_root.
+                `Hermès, il faut travailler le projet ${project.name} (${project.id}), bloc ${block.num} — ${block.name}.`,
                 objectif ? `Objectif : ${objectif}.` : '',
                 nextAction ? `Prochaine action : ${nextAction}.` : '',
               ]

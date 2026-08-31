@@ -255,11 +255,27 @@ Jarvis bloc 05 : `current_mission.json` confirme
 `project_domain=JARVIS`, `project_context.project_id=jarvis`,
 `block.num=05` — résolution exacte du bloc cliqué. 0 erreur console sur
 les deux boutons.
-**Limite connue, non corrigée** : la classification du domaine reste par
-mot-clé texte (Jarvis/Pedro/ADV seulement) — EduPilot, Caisse Alliance de
-Dreux, Ma Buvette Mobile, ABG, Obsidian, Graphify, Valéna ne sont pas
-reconnus, ce bouton partirait à tort vers Jarvis sur leurs blocs. Hors
-périmètre de cette correction (Ruth a priorisé Jarvis/Hermès).
+**Limite corrigée (2026-08-31, Ruth : "limite honnete regle les")** :
+`DOMAIN_RULES` (`decision_engine.py`) n'avait aucun mot-clé pour EduPilot,
+Caisse Alliance de Dreux, Ma Buvette Mobile (retombaient sur `JARVIS` par
+défaut) ; `_project_context` (`hermes_core/api.py`) avait sa propre liste de
+racines projet locale et incomplète (ADV absent) au lieu de lire
+`project_blocks.PROJECT_BUILD_MAP_PATHS` — la source unique que ce module
+documente lui-même. Corrigé : mots-clés ajoutés, `_PROJECT_ROOTS` dérivé de
+la source unique + racine ADV ajoutée à part (format de suivi différent,
+absent de `PROJECT_BUILD_MAP_PATHS`). Le message envoyé par le bouton inclut
+maintenant aussi l'id littéral du projet (`project.id`), pas seulement son
+nom affiché — `_project_context` résout par sous-chaîne exacte de l'id, pas
+par nom lisible. **Testé réellement** (Playwright) sur EduPilot, Caisse
+Alliance de Dreux, Ma Buvette Mobile et ADV : les 4 résolvent maintenant le
+bon `project_domain` + `project_id` (avant : tout tombait sur `JARVIS`, ADV
+n'avait même pas de racine projet du tout). 30/30 tests `hermes_core`
+toujours verts. Aucune régression sur Jarvis bloc 05 (revérifié).
+**Reste non couvert, honnêtement** : ABG, Obsidian, Graphify, Valéna n'ont
+toujours pas de `PROJECT_BUILD_MAP.md` — ce n'est pas un bug de
+classification, il n'y a simplement aucune donnée de bloc à résoudre pour
+ces 4 projets (le bouton "Travailler ce bloc avec Hermès" n'est d'ailleurs
+même pas atteignable pour eux, faute de blocs listés).
 
 ---
 
@@ -306,6 +322,12 @@ validé avec Codex, puis un seul test micro réel Ruth valide l'interruption.
 afficher « rien n'est lancé » alors que le Bloc 20 est déjà `TESTED`. Ce n'est
 pas un cache; l'UI doit distinguer état du bloc, consultation en cours et
 historique d'exécution par `request_id`.
+
+**CORRECTION CŒUR (Codex, 2026-08-31)** : historique borné de 24 missions dans
+le state Hermès, lié par `request_id`, avec agents/route/résultat et statut du
+bloc. L'endpoint de lecture expose désormais `mission_history` et
+`last_execution` séparément de la mission courante. L'UI G doit seulement les
+présenter — aucun état n'est à deviner ou écraser.
 
 **TESTS** : pytest hermes_core (mission, policy, orchestrator) verts d'après Codex ; exécution réelle testée manuellement 2 fois (Pedro bloc Sécurité).
 
