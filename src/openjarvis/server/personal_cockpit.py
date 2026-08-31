@@ -2937,6 +2937,13 @@ CURRENT_MISSION_PATH = HERMES_DIR / "current_mission.json"
 CURRENT_AGENT_ROUTE_PATH = HERMES_DIR / "current_agent_route.json"
 
 
+# Une mission proposée non traitée après ce délai n'est plus affichée comme
+# "à l'instant" — trouvaille Codex du 2026-08-31 : Ruth a vu une tentative
+# bloquée par quota datant de la veille présentée sans aucune indication
+# d'ancienneté, confondable avec l'état réel du projet après coup.
+PROPOSED_MISSION_STALE_HOURS = 6
+
+
 @router.get("/hermes/proposed-mission")
 async def get_proposed_mission():
     """Ce qu'Hermès a compris et préparé pour la dernière demande — lecture
@@ -2945,9 +2952,13 @@ async def get_proposed_mission():
     jamais d'approbation toute seule."""
     mission = _load_json(CURRENT_MISSION_PATH) or {}
     route = _load_json(CURRENT_AGENT_ROUTE_PATH) or {}
-    if not mission:
+    if not mission or not CURRENT_MISSION_PATH.exists():
         return {"has_mission": False, "mission": None, "route": None}
-    return {"has_mission": True, "mission": mission, "route": route}
+    generated_at = datetime.fromtimestamp(CURRENT_MISSION_PATH.stat().st_mtime).isoformat(timespec="seconds")
+    age_hours = (datetime.now() - datetime.fromtimestamp(CURRENT_MISSION_PATH.stat().st_mtime)).total_seconds() / 3600
+    if age_hours > PROPOSED_MISSION_STALE_HOURS:
+        return {"has_mission": False, "mission": None, "route": None, "expired_at": generated_at}
+    return {"has_mission": True, "mission": mission, "route": route, "generated_at": generated_at}
 
 
 class PrepareExecutionRequest(BaseModel):

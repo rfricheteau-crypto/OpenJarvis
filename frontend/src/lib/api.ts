@@ -267,6 +267,7 @@ export interface ProposedMissionResponse {
   has_mission: boolean;
   mission: Record<string, any> | null;
   route: Record<string, any> | null;
+  generated_at?: string;
 }
 
 export async function fetchProposedMission(): Promise<ProposedMissionResponse> {

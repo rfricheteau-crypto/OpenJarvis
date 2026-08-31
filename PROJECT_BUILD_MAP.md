@@ -48,7 +48,9 @@ montrer à Ruth (progressive disclosure).
 - [x] Design system extrait (`prototypes/ruthos/designSystem.ts`) — `STATUS_COLORS`, `priorityToStatus`
 - [x] G promue écran par défaut de `/jarvis-personal` (échappatoire `?classic=1` conservée, rien supprimé)
 - [x] **Testé en direct par Ruth avec les vraies actions** (2026-08-29, ~2h après le câblage) — chat réel, bouton d'approbation, Actualiser, tuile "En attente" : Ruth confirme *"ça marche tout est ok"*, aucune correction demandée
-- [ ] Câblage micro/voix (le champ reste texte seul) — **volontairement pas intégré maintenant** : audit du 2026-08-29 (`CORE/AUDITS/2026-08-29_voice_conversation_audit.md`) a trouvé un vocal fonctionnel mais pas encore agréable ("un peu lent et perdu par moment", verdict Ruth réel) — 3 corrections nécessaires avant d'intégrer (garde anti-écho silencieuse, erreurs STT sur noms propres, latence ~2-4s). Ne pas câbler tant que ces 3 points ne sont pas traités.
+- [x] Câblage micro/voix (2026-08-30, extraction `useHermesSpeaker` + bouton micro G) — testé Playwright réel (cycle idle→recording→idle, 44px, aucune régression texte). Test humain réel (vraie voix, transcription, écoute Kokoro) toujours requis avant validation finale, non fait — voir Bloc 04.
+- [x] Rafraîchissement automatique sans clic + panne backend signalée clairement (2026-08-31, demande Ruth explicite) — polling 45s tant que la page reste ouverte, bannière rouge si la synchronisation échoue au lieu de laisser une vieille donnée affichée comme actuelle. Testé réellement : panne backend simulée (route bloquée), bannière `"Connexion à Hermès indisponible — dernière donnée connue à HH:MM"` confirmée à l'écran.
+- [x] Carte "Mission proposée" ne reste plus affichée indéfiniment après une tentative ancienne (2026-08-31, trouvaille Codex) — expire après 6h sans action, `generated_at` renvoyé par l'API.
 
 **DÉPENDANCES** : aucune côté code. Dépend de la disponibilité réelle du backend `personal_cockpit.py` (port 8000) pour que le chat/l'approbation fonctionnent hors environnement de dev.
 
@@ -67,12 +69,13 @@ Test mobile réel (Playwright, viewport iPhone 390×844, 2026-08-29) : aucun scr
 
 **CRITÈRES DE FIN** : Ruth teste le chat et l'approbation en conditions réelles et confirme que ça fonctionne comme attendu → passage à `TESTED` (fait, 2026-08-29). `DONE` global du bloc reste en attente de la tâche vocale (volontairement différée, pas oubliée).
 
-**DERNIÈRE REVUE CLAUDE** : 2026-08-29, testé en direct par Ruth (chat, approbation, Actualiser, tuile En attente) — confirmé fonctionnel, aucune correction demandée.
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — micro G câblé, rafraîchissement auto + bannière panne ajoutés et testés réellement (Playwright, panne simulée). Codex indisponible (quota) au moment de la demande de Ruth — travail repris seul, aucune coordination possible sur ce point précis.
+**REVUE CLAUDE PRÉCÉDENTE** : 2026-08-29, testé en direct par Ruth (chat, approbation, Actualiser, tuile En attente) — confirmé fonctionnel, aucune correction demandée.
 **DERNIÈRE REVUE CODEX** : Codex a construit en parallèle le routage propre (`App.tsx` → `RuthOSPrototypeRoute`, lazy-loaded, fetch du snapshot) et la première tranche de la tuile "En attente" (Bloc 02) — non consigné ici avant maintenant, à confirmer avec Codex à sa prochaine session.
 
 **RUTH_DECISION_REQUIRED** : aucune — palette, structure, variante et câblage texte tous validés en conditions réelles par Ruth.
 
-**PROCHAINE ACTION** : corriger les 3 points vocaux identifiés (garde anti-écho silencieuse, erreurs STT noms propres, latence) avant tout câblage micro dans G — travail autonome possible sans Ruth, retest par Ruth obligatoire avant intégration finale.
+**PROCHAINE ACTION** : test humain réel du micro (vraie voix, transcription, écoute Kokoro) avec Ruth sur navigateur — c'est le seul point encore ouvert de ce bloc.
 
 ---
 

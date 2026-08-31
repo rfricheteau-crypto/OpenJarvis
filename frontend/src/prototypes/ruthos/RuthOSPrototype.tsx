@@ -52,6 +52,8 @@ type DetailKey = 'attente' | 'alertes' | 'projets';
 type RuthOSPrototypeProps = {
   snapshot: PersonalCockpitSnapshot | null;
   onRefresh?: () => Promise<void>;
+  connectionError?: boolean;
+  lastUpdatedAt?: string | null;
 };
 
 type ViewModel = {
@@ -1379,6 +1381,8 @@ function VariantG({
   model,
   snapshot,
   onRefresh,
+  connectionError,
+  lastUpdatedAt,
   detail,
   projectId,
   blockNum,
@@ -1394,6 +1398,8 @@ function VariantG({
   model: ViewModel;
   snapshot: PersonalCockpitSnapshot | null;
   onRefresh?: () => Promise<void>;
+  connectionError?: boolean;
+  lastUpdatedAt?: string | null;
   detail: DetailKey | null;
   projectId: string | null;
   blockNum: string | null;
@@ -1417,6 +1423,7 @@ function VariantG({
   const [refreshing, setRefreshing] = useState(false);
   const [proposedMission, setProposedMission] = useState<Record<string, any> | null>(null);
   const [proposedRoute, setProposedRoute] = useState<Record<string, any> | null>(null);
+  const [proposedMissionAt, setProposedMissionAt] = useState<string | null>(null);
   const [preparingExecution, setPreparingExecution] = useState(false);
 
   const refreshProposedMission = useCallback(async () => {
@@ -1424,6 +1431,7 @@ function VariantG({
       const result = await fetchProposedMission();
       setProposedMission(result.has_mission ? result.mission : null);
       setProposedRoute(result.has_mission ? result.route : null);
+      setProposedMissionAt(result.has_mission ? result.generated_at ?? null : null);
     } catch {
       // Lecture seule, best-effort — ne bloque jamais la conversation.
     }
@@ -1573,7 +1581,17 @@ function VariantG({
       <HomeSidebar />
       <main className="g-main">
         <div className="d-topbar">
-          <span className="d-status-line"><i className="d-dot d-dot-active" /> Système opérationnel</span>
+          {connectionError ? (
+            <span className="d-status-line" title="La dernière tentative de synchronisation a échoué — les informations affichées peuvent être anciennes.">
+              <i className="d-dot d-dot-error" /> Connexion à Hermès indisponible
+              {lastUpdatedAt ? ` — dernière donnée connue à ${new Date(lastUpdatedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+            </span>
+          ) : (
+            <span className="d-status-line">
+              <i className="d-dot d-dot-active" /> Système opérationnel
+              {lastUpdatedAt ? ` — à jour à ${new Date(lastUpdatedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+            </span>
+          )}
           <button type="button" className="d-ghost-btn" onClick={handleRefresh} disabled={refreshing || !onRefresh}>
             <RefreshCw size={15} className={refreshing ? 'd-spin' : undefined} /> Actualiser
           </button>
@@ -1743,7 +1761,7 @@ function VariantSwitcher({ value, onChange }: { value: VariantKey; onChange: (va
   );
 }
 
-export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
+export function RuthOSPrototype({ snapshot, onRefresh, connectionError, lastUpdatedAt }: RuthOSPrototypeProps) {
   const [variant, setVariant] = useState<VariantKey>(currentVariant);
   const [detail, setDetail] = useState<DetailKey | null>(currentDetail);
   const [projectId, setProjectId] = useState<string | null>(currentProjectId);
@@ -1862,6 +1880,8 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
           model={model}
           snapshot={snapshot}
           onRefresh={onRefresh}
+          connectionError={connectionError}
+          lastUpdatedAt={lastUpdatedAt}
           detail={detail}
           projectId={projectId}
           blockNum={blockNum}
@@ -1885,30 +1905,46 @@ export function RuthOSPrototype({ snapshot, onRefresh }: RuthOSPrototypeProps) {
   );
 }
 
+// Rafraîchissement automatique tant que la page reste ouverte, sans clic
+// manuel (demande Ruth 2026-08-31 : "je ne veux pas devoir cliquer sur un
+// bouton pour rafraîchir"). Un échec ne doit jamais afficher silencieusement
+// une donnée périmée comme si elle était à jour — connectionError le signale
+// explicitement, snapshot précédent conservé à l'écran plutôt que vidé.
+const AUTO_REFRESH_INTERVAL_MS = 45_000;
+
 export function RuthOSPrototypeRoute() {
   const [snapshot, setSnapshot] = useState<PersonalCockpitSnapshot | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     return fetchPersonalCockpit()
-      .then((nextSnapshot) => setSnapshot(nextSnapshot))
+      .then((nextSnapshot) => {
+        setSnapshot(nextSnapshot);
+        setConnectionError(false);
+        setLastUpdatedAt(new Date().toISOString());
+      })
       .catch(() => {
-        // The visual prototype remains usable with explicit fallback data.
+        // La donnée précédente reste affichée (mieux qu'un écran vide),
+        // mais l'échec est signalé explicitement — jamais silencieux.
+        setConnectionError(true);
       });
   }, []);
 
   useEffect(() => {
-    let active = true;
-    void fetchPersonalCockpit()
-      .then((nextSnapshot) => {
-        if (active) setSnapshot(nextSnapshot);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), AUTO_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [refresh]);
 
-  return <RuthOSPrototype snapshot={snapshot} onRefresh={refresh} />;
+  return (
+    <RuthOSPrototype
+      snapshot={snapshot}
+      onRefresh={refresh}
+      connectionError={connectionError}
+      lastUpdatedAt={lastUpdatedAt}
+    />
+  );
 }
 
 const RUTH_OS_STYLES = `
@@ -1948,6 +1984,7 @@ const RUTH_OS_VARIANT_D_STYLES = `
 .d-profile span{display:flex;align-items:center;gap:5px;font-size:11px;color:#6b7290}
 .d-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
 .d-dot-active{background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,.7)}
+.d-dot-error{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.7)}
 .d-main{padding:22px 26px 60px;min-width:0;overflow-y:auto}
 .d-topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
 .d-status-line{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.05em}
