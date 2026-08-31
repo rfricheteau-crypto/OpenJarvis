@@ -47,8 +47,7 @@ import {
   type ProjectBlock,
 } from '../../lib/api';
 import { useAppStore } from '../../lib/store';
-import { useSpeech } from '../../hooks/useSpeech';
-import { useHermesSpeaker } from '../../hooks/useHermesSpeaker';
+import { useHermesVoiceSession, type HermesVoiceMessage } from '../../hooks/useHermesVoiceSession';
 import { STATUS_COLORS, priorityToStatus, blockStatusMeta, type StatusKey } from './designSystem';
 import { PROJECTS, type ProjectData } from '../../lib/projectsRegistry';
 
@@ -1633,21 +1632,43 @@ function VariantG({
     void refreshProposedMission();
   }, [refreshProposedMission]);
 
-  const speech = useSpeech();
-  const { isSpeaking, speak, stopSpeaking } = useHermesSpeaker();
+  // Identifiant de conversation stable — le contrat WebRTC (Codex, 2026-08-31)
+  // exige que G envoie le même session_id que sa conversation texte, sinon le
+  // runtime en crée un nouveau et la session vocale devient une mémoire
+  // distincte de G.
+  const [hermesSessionId] = useState<string>(() => {
+    try {
+      const existing = window.localStorage.getItem('ruthos-hermes-session-id');
+      if (existing) return existing;
+      const created = crypto.randomUUID();
+      window.localStorage.setItem('ruthos-hermes-session-id', created);
+      return created;
+    } catch {
+      return `session-${Date.now()}`;
+    }
+  });
 
-  const handleSend = useCallback(async (messageOverride?: string, channel: 'voice' | 'text' = 'text') => {
+  const handleVoiceMessage = useCallback((message: HermesVoiceMessage) => {
+    if (message.role === 'user') return; // affichage : seule la réponse d'Hermès occupe la bulle
+    setChatReply(message.text);
+    // Le runtime V2 appelle déjà /api/hermes/chat côté serveur (contrat,
+    // section "Flux reçu par G") — l'observateur Hermès tourne donc déjà en
+    // tâche de fond ; on relit juste la mission qu'il prépare, comme après un
+    // envoi texte classique.
+    setTimeout(() => void refreshProposedMission(), 900);
+  }, [refreshProposedMission]);
+
+  const voiceSession = useHermesVoiceSession({ onMessage: handleVoiceMessage });
+
+  const handleSend = useCallback(async (messageOverride?: string) => {
     const message = (messageOverride ?? chatInput).trim();
     if (!message || sending) return;
     setSending(true);
     try {
-      const result = await sendPersonalCockpitChat(message, [], 'auto');
+      const result = await sendPersonalCockpitChat(message, [], 'auto', hermesSessionId);
       setChatReply(result.reply);
       setChatInput('');
       if (result.warning) toast.warning(result.warning);
-      // Seule la voix déclenche la lecture audio de la réponse — le texte
-      // reste silencieux comme avant l'ajout du micro (pas de régression).
-      if (channel === 'voice' && result.reply) void speak(result.reply, true);
       // L'observateur Hermès tourne en tâche de fond côté serveur — laisser
       // un court délai avant de relire la mission proposée qu'il prépare.
       setTimeout(() => void refreshProposedMission(), 900);
@@ -1656,7 +1677,7 @@ function VariantG({
     } finally {
       setSending(false);
     }
-  }, [chatInput, sending, refreshProposedMission, speak]);
+  }, [chatInput, sending, refreshProposedMission, hermesSessionId]);
 
   // "Travailler ce bloc avec Hermès" / "Demander à Hermès" — envoie le vrai
   // contexte du bloc/projet cliqué au même chat déjà câblé (handleSend), puis
@@ -1671,48 +1692,41 @@ function VariantG({
     [handleSend, onCloseDetail],
   );
 
-  const handleMicClick = useCallback(async () => {
-    // Anti-écho : un clic micro ne laisse jamais Hermès parler par-dessus Ruth.
-    if (isSpeaking) stopSpeaking({ silent: true });
-
-    if (speech.isRecording) {
-      try {
-        const transcript = await speech.stopRecording();
-        if (!transcript.trim()) {
-          toast.warning('Aucune parole détectée, réessaie ou utilise le texte.');
-          return;
-        }
-        void handleSend(transcript, 'voice');
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Transcription impossible, utilise le texte.');
-      }
+  // Bouton unique = démarrer/quitter la session complète (contrat, section
+  // "Interruption / barge-in") — plus de clic par tour de parole, plus de
+  // clic pour arrêter avant transcription. Le runtime pilote seul la fin de
+  // parole, la réponse orale et l'interruption (VAD continu, pas de
+  // POST /interrupt).
+  const handleVoiceToggle = useCallback(async () => {
+    if (voiceSession.isActive || voiceSession.runtimeState === 'connecting') {
+      voiceSession.endSession();
       return;
     }
-
-    if (!speech.available) {
-      toast.error('Service de transcription indisponible pour le moment, utilise le texte.');
-      return;
-    }
-
     try {
-      await speech.startRecording();
+      await voiceSession.startSession(hermesSessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
-      if (message.includes('permission denied')) {
+      if (message.toLowerCase().includes('permission') || message.toLowerCase().includes('denied')) {
         toast.error('Micro refusé par le navigateur, utilise le texte.');
       } else {
-        toast.error('Impossible d’accéder au micro, utilise le texte.');
+        toast.error(message || 'Session vocale indisponible, utilise le texte.');
       }
     }
-  }, [handleSend, isSpeaking, speech, stopSpeaking]);
+  }, [voiceSession, hermesSessionId]);
 
-  const micLabel = speech.isTranscribing
-    ? 'Transcription en cours'
-    : speech.isRecording
-      ? 'Arrêter l’écoute'
-      : isSpeaking
-        ? 'Hermès parle'
-        : 'Parler à Hermès';
+  const voiceStateLabels: Record<string, string> = {
+    connecting: 'Connexion…',
+    LISTENING_ARMED: 'À l’écoute — parle quand tu veux',
+    RECORDING: 'Ruth parle…',
+    TRANSCRIBING: 'Transcription…',
+    THINKING: 'Hermès réfléchit…',
+    SPEAKING: 'Hermès parle — reparle pour l’interrompre',
+    COOLDOWN: 'Hermès parle — reparle pour l’interrompre',
+    LISTENING_AGAIN: 'À l’écoute — parle quand tu veux',
+  };
+  const micLabel = voiceSession.isActive || voiceSession.runtimeState === 'connecting'
+    ? voiceStateLabels[voiceSession.runtimeState] ?? 'Session vocale active — clique pour quitter'
+    : 'Activer la conversation vocale';
 
   const handlePrepareExecution = useCallback(async () => {
     if (preparingExecution) return;
@@ -1958,17 +1972,25 @@ function VariantG({
               />
               <button
                 type="button"
-                className={`g-mic-btn${speech.isRecording ? ' g-mic-btn-recording' : ''}${isSpeaking ? ' g-mic-btn-speaking' : ''}`}
-                onClick={() => void handleMicClick()}
-                disabled={sending || speech.isTranscribing}
+                className={`g-mic-btn${
+                  voiceSession.runtimeState === 'SPEAKING' || voiceSession.runtimeState === 'COOLDOWN'
+                    ? ' g-mic-btn-speaking'
+                    : voiceSession.isActive || voiceSession.runtimeState === 'connecting'
+                      ? ' g-mic-btn-recording'
+                      : ''
+                }`}
+                onClick={() => void handleVoiceToggle()}
+                disabled={sending}
                 aria-label={micLabel}
                 title={micLabel}
               >
-                {speech.isTranscribing ? (
+                {voiceSession.runtimeState === 'connecting' ||
+                voiceSession.runtimeState === 'TRANSCRIBING' ||
+                voiceSession.runtimeState === 'THINKING' ? (
                   <Loader2 size={16} className="d-spin" />
-                ) : isSpeaking ? (
+                ) : voiceSession.runtimeState === 'SPEAKING' || voiceSession.runtimeState === 'COOLDOWN' ? (
                   <Volume2 size={16} />
-                ) : speech.isRecording ? (
+                ) : voiceSession.isActive ? (
                   <MicOff size={16} />
                 ) : (
                   <Mic size={16} />
@@ -1984,11 +2006,13 @@ function VariantG({
                 <ChevronRight size={16} />
               </button>
             </div>
-            {speech.isRecording || speech.isTranscribing || isSpeaking ? (
-              <p className="g-mic-status">
-                {speech.isRecording ? 'Écoute en cours…' : speech.isTranscribing ? 'Transcription…' : 'Hermès parle…'}
-              </p>
+            {voiceSession.isActive || voiceSession.runtimeState === 'connecting' ? (
+              <p className="g-mic-status">{micLabel}</p>
             ) : null}
+            {voiceSession.error ? <p className="g-mic-status g-mic-status-error">{voiceSession.error}</p> : null}
+            {/* Session vocale WebRTC continue (contrat Codex, 2026-08-31) —
+                l'audio distant arrive via pc.ontrack, jamais visible. */}
+            <audio ref={voiceSession.audioElRef} autoPlay style={{ display: 'none' }} />
           </div>
         </section>
 
@@ -2439,6 +2463,7 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-mic-btn-speaking{color:#fff;background:linear-gradient(135deg,#8b5cf6,#3b82f6);border-color:transparent}
 @keyframes g-mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.35)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
 .g-mic-status{margin:8px 0 0;font-size:12px;color:var(--d-muted);text-align:right}
+.g-mic-status-error{color:#f87171}
 @keyframes d-spin{to{transform:rotate(360deg)}}
 .d-spin{animation:d-spin .8s linear infinite}
 .g-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
