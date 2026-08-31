@@ -308,9 +308,22 @@ possède VAD + barge-in. POC relancé, smoke WebRTC et compilation OK; aucune
 preuve micro/voix/barge-in en headless. Détail :
 `HANDOFFS/2026-08-31_Codex_voice-mission-audit-needs-claude-ui.md`.
 
-**RUTH_DECISION_REQUIRED** : aucune — juste le test humain à faire quand Ruth a un moment.
-**PROCHAINE ACTION** : Claude raccorde G au contrat de session vocale continue
-validé avec Codex, puis un seul test micro réel Ruth valide l'interruption.
+**TEST HUMAIN RÉEL FAIT (Ruth, 2026-08-31 ~22h40)** : confirmé sur G (Hermès),
+pas une confusion d'écran. Les deux lacunes déjà diagnostiquées sont bien
+réelles en usage réel, pas seulement en théorie : **impossible d'interrompre
+Hermès pendant qu'il parle**, et **le micro doit être arrêté manuellement
+(reclic) pour déclencher la transcription** — confirme qu'il s'agit encore
+d'une dictée `MediaRecorder` (clic → parle → clic pour arrêter → transcrit),
+pas d'une session vocale continue avec détection de fin de parole.
+
+**RUTH_DECISION_REQUIRED** : aucune sur le diagnostic (confirmé). Reste
+ouvert : aucun contrat d'API concret (endpoints, format des messages) n'a
+encore été publié par Codex entre le POC `hermes-webrtc-poc-v2` et G — avant
+de commencer l'intégration côté frontend, il faut ce contrat écrit, sinon je
+devine une API qui peut ne pas correspondre au POC réel.
+**PROCHAINE ACTION** : Claude demande le contrat d'intégration à Codex
+(handoff), puis raccorde G dessus ; un second test micro réel Ruth valide
+l'interruption une fois fait.
 
 ---
 
