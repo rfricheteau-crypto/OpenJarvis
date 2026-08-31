@@ -42,6 +42,8 @@ import {
   submitHermesValidation,
   type AdvSnapshot,
   type AgentsStatusResponse,
+  type LastExecutionInfo,
+  type MissionHistoryEntry,
   type ProjectBlock,
 } from '../../lib/api';
 import { useAppStore } from '../../lib/store';
@@ -1608,6 +1610,11 @@ function VariantG({
   const [showSessionLog, setShowSessionLog] = useState(false);
   const [previewPrompt, setPreviewPrompt] = useState<string | null>(null);
   const [previewAgent, setPreviewAgent] = useState<string | null>(null);
+  // 3 états distincts (Codex, 2026-08-31) : bloc réel / consultation en
+  // cours / dernière exécution prouvée — ne jamais laisser l'un écraser
+  // visuellement les autres.
+  const [missionHistory, setMissionHistory] = useState<MissionHistoryEntry[]>([]);
+  const [lastExecution, setLastExecution] = useState<LastExecutionInfo | null>(null);
 
   const refreshProposedMission = useCallback(async () => {
     try {
@@ -1615,6 +1622,8 @@ function VariantG({
       setProposedMission(result.has_mission ? result.mission : null);
       setProposedRoute(result.has_mission ? result.route : null);
       setProposedMissionAt(result.has_mission ? result.generated_at ?? null : null);
+      setMissionHistory(result.mission_history ?? []);
+      setLastExecution(result.last_execution ?? null);
     } catch {
       // Lecture seule, best-effort — ne bloque jamais la conversation.
     }
@@ -1738,12 +1747,16 @@ function VariantG({
       setPreviewPrompt(null);
       setPreviewAgent(null);
       await onRefresh?.();
+      // Recharge last_execution/mission_history — sinon le résultat qu'on
+      // vient d'obtenir n'apparaît nulle part avant le prochain cycle de
+      // polling (jusqu'à 45s).
+      await refreshProposedMission();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Validation Hermès impossible');
     } finally {
       setApproving(false);
     }
-  }, [approving, onRefresh]);
+  }, [approving, onRefresh, refreshProposedMission]);
 
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
@@ -1856,6 +1869,19 @@ function VariantG({
                     ) : null}
                   </p>
                 ) : null}
+                {proposedMission.project_context?.block?.status ? (
+                  // Ruth (2026-08-31) : le bloc peut déjà être TESTED pendant
+                  // qu'une nouvelle consultation est juste proposée — ne
+                  // jamais laisser croire que "rien n'est lancé" = "rien n'a
+                  // jamais marché".
+                  <p className="g-mission-context">
+                    État réel du bloc : <strong>{proposedMission.project_context.block.status}</strong>
+                    {proposedMission.project_context.block.status !== 'TESTED' &&
+                    proposedMission.project_context.block.status !== 'DONE' ? (
+                      <> — cette consultation ne l'a pas encore changé</>
+                    ) : null}
+                  </p>
+                ) : null}
                 <p className="g-mission-agent">
                   Agent recommandé : <strong>{proposedRoute?.route?.lead?.agent ?? proposedMission.recommended_agent ?? 'à déterminer'}</strong>
                   {proposedRoute?.route?.task_reason ? <> — {proposedRoute.route.task_reason}</> : null}
@@ -1876,6 +1902,48 @@ function VariantG({
                   {preparingExecution ? 'Préparation…' : previewPrompt ? 'Régénérer le prompt' : 'Préparer avec Hermès'}
                 </button>
               </div>
+            ) : null}
+            {lastExecution ? (
+              // 3e état demandé par Codex (2026-08-31, audit orchestration) :
+              // distinct de "mission proposée" ci-dessus — s'affiche même sans
+              // consultation active, pour ne jamais laisser croire que rien
+              // n'a jamais été exécuté (bug Pedro d'origine).
+              (() => {
+                const historyEntry = missionHistory.find(
+                  (entry) => entry.request_id === lastExecution.mission_request_id,
+                );
+                const agent = lastExecution.executed_by || lastExecution.requested_agent || 'agent inconnu';
+                const when = lastExecution.resolved_at || lastExecution.executed_at;
+                return (
+                  <div className="g-mission-card g-last-execution-card">
+                    <span className="g-mission-eyebrow g-mission-eyebrow-done">Dernière exécution réelle — preuve obtenue</span>
+                    {historyEntry ? (
+                      <p className="g-mission-context">
+                        Projet <strong>{historyEntry.project_id || '—'}</strong>
+                        {historyEntry.block_num ? (
+                          <> · bloc <strong>{historyEntry.block_num} — {historyEntry.block_name}</strong></>
+                        ) : null}
+                        {historyEntry.block_status ? <> · état réel : <strong>{historyEntry.block_status}</strong></> : null}
+                      </p>
+                    ) : null}
+                    <p className="g-mission-summary">
+                      {cleanText(lastExecution.result_summary, 'Résultat enregistré, sans résumé détaillé.')}
+                    </p>
+                    <p className="g-mission-agent">
+                      Exécuté par <strong>{agent}</strong>
+                      {lastExecution.fallback_used ? ' (repli automatique)' : ''}
+                      {when
+                        ? ` · ${new Date(when).toLocaleString('fr-FR', {
+                            day: '2-digit',
+                            month: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                        : ''}
+                    </p>
+                  </div>
+                );
+              })()
             ) : null}
             <div className="g-bubble-input">
               <input
@@ -2360,6 +2428,8 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-mission-cta{margin-top:8px;padding:8px 14px;border-radius:10px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.16);color:#c4b5fd;font-size:12.5px;cursor:pointer}
 .g-mission-cta:hover{background:rgba(167,139,250,.26)}
 .g-mission-cta:disabled{opacity:.6;cursor:not-allowed}
+.g-last-execution-card{margin-top:10px;background:rgba(34,197,94,.07);border-color:rgba(34,197,94,.25)}
+.g-mission-eyebrow-done{color:#4ade80}
 .g-bubble-input{display:grid;grid-template-columns:1fr auto auto;gap:10px;margin-top:4px;padding-top:14px;border-top:1px solid var(--d-card-border)}
 .g-bubble-input input{height:44px;border-radius:11px;border:1px solid var(--d-card-border);background:var(--d-bg);color:var(--d-text);padding:0 12px;font-size:13px}
 .g-send-btn,.g-mic-btn{width:44px;height:44px;border:1px solid var(--d-card-border);border-radius:11px;background:transparent;color:var(--d-muted);display:grid;place-items:center}

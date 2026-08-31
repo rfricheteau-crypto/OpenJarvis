@@ -272,11 +272,49 @@ export async function submitHermesValidation(
 // 2026-08-30 (Option B) : lecture seule de ce qu'Hermès a compris/préparé,
 // jamais de validation créée juste en parlant. "Préparer l'exécution" est
 // le seul geste explicite qui en crée une (via l'endpoint POST).
+// mission_history / last_execution — Codex (2026-08-31) : une nouvelle
+// consultation ne doit plus visuellement écraser la preuve d'une exécution
+// passée (bug Pedro : bloc réellement TESTED affiché comme "rien n'est
+// lancé"). last_execution vient de validation_state.last_resolved, distinct
+// de la mission proposée courante ; mission_history relie les deux par
+// request_id pour retrouver le bloc/projet concerné.
+export interface MissionHistoryEntry {
+  request_id: string;
+  mission_id: string;
+  request_summary: string;
+  project_id: string;
+  block_num: string;
+  block_name: string;
+  block_status: string;
+  lifecycle_status: string;
+  execution_status: string;
+  result_summary: string;
+  planned_agent: string;
+  requested_agent: string;
+  executed_by: string;
+  fallback_used: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LastExecutionInfo {
+  mission_request_id?: string;
+  execution_status?: string;
+  result_summary?: string;
+  executed_at?: string;
+  resolved_at?: string;
+  requested_agent?: string;
+  executed_by?: string;
+  fallback_used?: boolean;
+}
+
 export interface ProposedMissionResponse {
   has_mission: boolean;
   mission: Record<string, any> | null;
   route: Record<string, any> | null;
   generated_at?: string;
+  mission_history?: MissionHistoryEntry[];
+  last_execution?: LastExecutionInfo | null;
 }
 
 export async function fetchProposedMission(): Promise<ProposedMissionResponse> {
