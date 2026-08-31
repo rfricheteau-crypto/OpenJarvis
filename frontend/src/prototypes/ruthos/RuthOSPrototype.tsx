@@ -1529,6 +1529,8 @@ function VariantG({
   const [proposedMissionAt, setProposedMissionAt] = useState<string | null>(null);
   const [preparingExecution, setPreparingExecution] = useState(false);
   const [lastAgentInfo, setLastAgentInfo] = useState<{ requested_agent: string; executed_by: string; fallback_used: boolean } | null>(null);
+  const [previewPrompt, setPreviewPrompt] = useState<string | null>(null);
+  const [previewAgent, setPreviewAgent] = useState<string | null>(null);
 
   const refreshProposedMission = useCallback(async () => {
     try {
@@ -1618,11 +1620,12 @@ function VariantG({
     setPreparingExecution(true);
     try {
       const result = await prepareExecution();
-      toast.success('Préparé — en attente de ton approbation dans "En attente"');
-      setProposedMission(null);
-      setProposedRoute(null);
+      toast.success('Prêt — relis le prompt ci-dessous puis "Approuver et envoyer"');
+      // La mission et son contexte restent visibles — Ruth (2026-08-31) :
+      // "me montrer ce prompt avant envoi". Seule l'approbation efface tout.
+      setPreviewPrompt(result.preview_prompt ?? null);
+      setPreviewAgent(result.preview_agent ?? null);
       await onRefresh?.();
-      void result;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Impossible de préparer l'exécution");
     } finally {
@@ -1640,6 +1643,10 @@ function VariantG({
       // Persistant, pas juste le toast qui disparaît — Ruth (2026-08-31) :
       // "je veux toujours savoir quel agent travaille réellement".
       if (result.agent?.executed_by) setLastAgentInfo(result.agent);
+      setProposedMission(null);
+      setProposedRoute(null);
+      setPreviewPrompt(null);
+      setPreviewAgent(null);
       await onRefresh?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Validation Hermès impossible');
@@ -1756,13 +1763,20 @@ function VariantG({
                   Agent recommandé : <strong>{proposedRoute?.route?.lead?.agent ?? proposedMission.recommended_agent ?? 'à déterminer'}</strong>
                   {proposedRoute?.route?.task_reason ? <> — {proposedRoute.route.task_reason}</> : null}
                 </p>
+                {previewPrompt ? (
+                  <div className="g-mission-preview">
+                    <span className="g-mission-eyebrow">Prompt exact — destiné à {previewAgent}</span>
+                    <pre className="g-mission-preview-text">{previewPrompt}</pre>
+                    <p className="g-mission-preview-note">C'est exactement ce que reçoit l'agent, rien de plus.</p>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   className="g-mission-cta"
                   onClick={() => void handlePrepareExecution()}
                   disabled={preparingExecution}
                 >
-                  {preparingExecution ? 'Préparation…' : 'Préparer avec Hermès'}
+                  {preparingExecution ? 'Préparation…' : previewPrompt ? 'Régénérer le prompt' : 'Préparer avec Hermès'}
                 </button>
               </div>
             ) : null}
@@ -2236,6 +2250,9 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-mission-summary{margin:0 0 6px;font-size:13.5px;color:var(--d-text)}
 .g-mission-context,.g-mission-agent{margin:0 0 4px;font-size:12px;color:var(--d-muted)}
 .g-mission-context strong,.g-mission-agent strong{color:var(--d-text);font-weight:500}
+.g-mission-preview{margin-top:10px;padding-top:10px;border-top:1px solid rgba(167,139,250,.2)}
+.g-mission-preview-text{white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,.25);border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.5;color:var(--d-text);font-family:inherit;margin:6px 0 4px;max-height:220px;overflow-y:auto}
+.g-mission-preview-note{margin:0;font-size:11px;color:var(--d-muted)}
 .g-mission-cta{margin-top:8px;padding:8px 14px;border-radius:10px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.16);color:#c4b5fd;font-size:12.5px;cursor:pointer}
 .g-mission-cta:hover{background:rgba(167,139,250,.26)}
 .g-mission-cta:disabled{opacity:.6;cursor:not-allowed}

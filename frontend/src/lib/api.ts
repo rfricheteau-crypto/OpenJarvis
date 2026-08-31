@@ -293,7 +293,7 @@ export async function fetchAgentsStatus(): Promise<AgentsStatusResponse> {
   return res.json();
 }
 
-export async function prepareExecution(note: string = ''): Promise<{ ok: boolean; action: string; validation: Record<string, any> }> {
+export async function prepareExecution(note: string = ''): Promise<{ ok: boolean; action: string; validation: Record<string, any>; preview_prompt?: string; preview_agent?: string }> {
   const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes/prepare-execution`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

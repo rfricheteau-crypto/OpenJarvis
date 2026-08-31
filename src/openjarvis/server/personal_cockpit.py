@@ -2168,7 +2168,16 @@ def _parse_markdown_table_row(line: str) -> list[str]:
 def _extract_obsidian_action_items(path: Path, default_project: str) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    content = path.read_text(encoding="utf-8")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        # Trouvé en incident réel le 2026-08-31 : fichier du vault Obsidian
+        # verrouillé côté iCloud (Errno 11, "Resource deadlock avoided").
+        # Une lecture échouée ici ne doit jamais faire échouer tout le
+        # snapshot du cockpit ni contribuer à bloquer le serveur — ignorer
+        # cette source pour ce tour, elle sera relue au prochain appel.
+        logger.warning("Obsidian action item read failed (skipped): %s", path)
+        return []
     source_path = _obsidian_relative_path(path)
     updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
     items: list[dict[str, Any]] = []
@@ -2474,7 +2483,14 @@ def _parse_ideas_inbox() -> list[dict[str, Any]]:
     """Parse ideas-inbox.md and return structured idea list."""
     if not OBSIDIAN_IDEAS_PATH.exists():
         return []
-    content = OBSIDIAN_IDEAS_PATH.read_text(encoding="utf-8")
+    try:
+        content = OBSIDIAN_IDEAS_PATH.read_text(encoding="utf-8")
+    except OSError:
+        # Même incident que _extract_obsidian_action_items (2026-08-31) :
+        # fichier iCloud verrouillé — ne jamais laisser ça faire échouer
+        # le snapshot entier.
+        logger.warning("Obsidian ideas inbox read failed (skipped)")
+        return []
     ideas: list[dict[str, Any]] = []
     current_section: str | None = None
     idx = 0
@@ -3009,6 +3025,34 @@ async def get_agents_status():
     }
 
 
+# Aperçu du prompt réel — Ruth (2026-08-31) : "me montrer ce prompt avant
+# envoi". Reflète exactement le gabarit construit par
+# CORE/bridge/agents.d/{codex,claude}.sh — dupliqué ici volontairement pour
+# un aperçu en lecture seule, sans jamais influencer l'envoi réel (les .sh
+# restent la seule source de vérité pour ce qui part vraiment).
+_CODEX_RESPONSE_LIMIT_BY_MODE = {"fast": "120 mots", "review": "600 mots", "deep": "1500 mots"}
+
+
+def _preview_agent_prompt(agent: str, mode: str, request_summary: str) -> str:
+    if agent != "codex":
+        # claude.sh n'ajoute aucune consigne textuelle — les restrictions
+        # sont des flags CLI (--permission-mode plan, --disallowedTools).
+        return request_summary
+    limit = _CODEX_RESPONSE_LIMIT_BY_MODE.get(mode, "600 mots")
+    prompt = (
+        f"Limite de réponse par défaut : {limit}, sauf preuve technique indispensable. "
+        "Ne lance jamais cette passerelle depuis l'appel courant (anti-récursion).\n\n"
+        f"{request_summary}"
+    )
+    if mode != "deep":
+        prompt = (
+            f"Consigne de mode {mode} : ne fais PAS de recherche web sauf si la réponse est "
+            "impossible sans, et dis-le si tu y as recours. Réponds avec tes connaissances "
+            f"internes en priorité, de façon brève.\n\n{prompt}"
+        )
+    return prompt
+
+
 class PrepareExecutionRequest(BaseModel):
     note: str = Field(default="", max_length=2000)
 
@@ -3052,7 +3096,14 @@ async def prepare_execution(request_body: PrepareExecutionRequest):
         logger.exception("prepare_execution failed")
         raise HTTPException(status_code=500, detail=f"Impossible de préparer l'exécution : {exc}") from exc
 
-    return {"ok": True, "action": action, "validation": result}
+    mode = str((route.get("route") or {}).get("mode") or "review")
+    return {
+        "ok": True,
+        "action": action,
+        "validation": result,
+        "preview_prompt": _preview_agent_prompt(str(agent), mode, request_summary),
+        "preview_agent": agent,
+    }
 
 
 @hermes_chat_router.post("/validate")
