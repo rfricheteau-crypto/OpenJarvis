@@ -156,10 +156,18 @@ continuité Hermès n'apparaissent plus comme des "projets".
 
 **RUTH_DECISION_REQUIRED** : aucune posée pour l'instant.
 
+**MISE À JOUR CODEX (2026-08-31)** : `GET /v1/personal-cockpit/project-state`
+expose maintenant les snapshots explicitement publiés sous
+`CODEX_RUTH_OS/CORE/project-state/snapshots/`, en lecture seule. La projection
+retire les chemins locaux et la provenance interne ; un fichier invalide ou
+incomplet est ignoré avec un avertissement, jamais interprété. Test API ciblé
+vert. Il n'y a pour l'instant qu'un snapshot Pedro publié : l'UI ne doit donc
+pas prétendre couvrir les autres projets avant leur propre publication.
+
 **PROCHAINE ACTION** : ne pas construire Personnel tant qu'aucune source n'existe.
-Pour Projets, attendre que Codex expose `CORE/project-state/` via une route
-consommable (pas encore le cas au 2026-08-29) — ne pas bricoler de
-contournement côté frontend entre-temps.
+Claude peut désormais consommer Project State dans « Projets » lorsque son
+chantier UI vocal/mission prioritaire est terminé — sans contournement ni
+donnée inventée.
 
 ---
 
@@ -328,6 +336,19 @@ le state Hermès, lié par `request_id`, avec agents/route/résultat et statut d
 bloc. L'endpoint de lecture expose désormais `mission_history` et
 `last_execution` séparément de la mission courante. L'UI G doit seulement les
 présenter — aucun état n'est à deviner ou écraser.
+
+**CORRECTION UI (Claude, 2026-08-31, commit `a5d6ea7`)** : les 3 états sont
+maintenant distincts à l'écran dans `RuthOSPrototype.tsx`. État réel du bloc
+ajouté directement dans la carte "Mission proposée" (`project_context.block.status`,
+déjà exposé par le backend, jamais affiché avant). Nouvelle carte séparée
+(accent vert, jamais confondue avec la carte violette de la mission en
+cours) "Dernière exécution réelle" — lit `last_execution`, recoupe
+`mission_history` par `request_id` pour le contexte projet/bloc, s'affiche
+même sans consultation active. Testé réellement (Playwright) : capture
+confirmant `MISSION_TEST_RECU + TESTED` (résultat Pedro réel) visible
+indépendamment de la consultation Jarvis bloc 05 alors en cours ; 0 erreur
+console ; mobile 390×844 sans scroll horizontal ; `tsc --noEmit` propre.
+**BUGS CONNUS ci-dessus : résolu.**
 
 **TESTS** : pytest hermes_core (mission, policy, orchestrator) verts d'après Codex ; exécution réelle testée manuellement 2 fois (Pedro bloc Sécurité).
 
