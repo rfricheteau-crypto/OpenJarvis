@@ -326,20 +326,20 @@ de coder, pas juste décidé seul.
 
 **OBJECTIF** : tâches Hermès qui tournent seules, sans que Ruth ait à les déclencher (brief du matin, triage mail, etc.).
 
-**STATUT GLOBAL** : `IN_PROGRESS` (partiellement cassé).
+**STATUT GLOBAL** : `TESTED`.
 
 **CE QUI EXISTE** : pas de moteur de workflow générique — les 16 fichiers `workflows/definitions/*.toml` sont des spécifications, jamais exécutées par du code (grep négatif). **Un seul workflow réellement câblé** : `hermes_prepare_my_day`, avec son propre script (`scripts/hermes_prepare_my_day.sh`) et un vrai LaunchAgent macOS actif (`com.ruth.jarvis.hermes.prepare-day.plist`, cron quotidien 8h, confirmé chargé). Deux autres LaunchAgents réels trouvés mais non explorés : `com.ruth.hermes.wake.plist` et `com.ruth.hermes.control.plist` (ouvre une vraie app macOS `Hermes Control.app`, créée le 8 mai, jamais mentionnée avant cet audit).
 
-**BUGS CONNUS** : `hermes_prepare_my_day` échoue depuis 4 jours (2026-08-28 → 08-31, `exit_code: 1` dans `runtime/hermes/automation_status.json`). **Root cause diagnostiquée le 2026-08-31** : `PermissionError: Operation not permitted` en écriture dans le vault Obsidian iCloud (`~/Library/Mobile Documents/iCloud~md~obsidian/...`) — confirmé que l'écriture fonctionne en interactif mais pas depuis le processus LaunchAgent en arrière-plan (`/usr/bin/python3` → résout vers le Python 3.9 embarqué dans Xcode). Permission système macOS (TCC/Accès complet au disque), pas un bug de code — nécessite une action de Ruth dans Réglages Système → Confidentialité et sécurité → Accès complet au disque. Ruth a choisi de continuer sur les autres décisions en attendant.
+**BUGS CONNUS** : `hermes_prepare_my_day` a échoué 4 jours (2026-08-28 → 08-31). **Root cause réelle corrigée par Codex le 2026-08-31** (différente de mon premier diagnostic de permission macOS) : une réécriture décorative secondaire dans Obsidian/iCloud faisait échouer tout le script *après* que le brief utile ait déjà été créé — corrigé pour ne plus être bloquante. Vérifié : `automation_status.json` = `status: ok, exit_code: 0` (2026-08-31 10:18 UTC). Aucune action Ruth nécessaire, contrairement à ce qui était noté avant.
 
 **CE QUI MANQUE** : les 15 autres workflows définis (mail_triage, obsidian_sync, daily_review...) et les 8 scripts `wrappers/*.py` (calendar_guard, mail_guard, etc., code réel non-stub) n'ont aucun déclencheur — construits, jamais branchés.
 
 **RUTH_DECISION_REQUIRED** : aucune sur les 15 workflows — tranché.
 **DÉCISION RUTH (2026-08-31)** : les 15 workflows non branchés restent de côté, même logique que les intégrations gelées (Bloc 09) — pas un chantier maintenant.
-**PROCHAINE ACTION** : Ruth règle la permission Accès complet au disque quand elle a un moment (seule action requise pour ce bloc) ; `Hermes Control.app` et `com.ruth.hermes.wake.plist` restent à auditer séparément si utile plus tard, pas urgent.
+**PROCHAINE ACTION** : aucune sur le brief matinal (corrigé) ; `Hermes Control.app` et `com.ruth.hermes.wake.plist` restent à auditer séparément si utile plus tard, pas urgent.
 
 **DERNIÈRE REVUE CLAUDE** : 2026-08-31 — voir cartographie globale.
-**DERNIÈRE REVUE CODEX** : non faite.
+**DERNIÈRE REVUE CODEX** : 2026-08-31 — a diagnostiqué et corrigé la vraie root cause du brief matinal (contre-revue de mon diagnostic initial de permission macOS, qui était incomplet).
 
 ---
 
