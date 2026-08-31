@@ -244,7 +244,15 @@ export interface HermesValidationResponse {
   execution_status: string;
   message: string;
   warning?: string;
-  agent?: { requested_agent: string; executed_by: string; fallback_used: boolean } | null;
+  agent?: { requested_agent: string; executed_by: string; fallback_used: boolean; session_log_available?: boolean } | null;
+}
+
+// Phase 3 — Ruth (2026-08-31) : "vérifier facilement que la mission a bien
+// été envoyée dans la vraie session/terminal de l'agent concerné."
+export async function fetchSessionLog(): Promise<{ available: boolean; content: string | null }> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes/session-log`);
+  if (!res.ok) throw new Error(`Failed to fetch session log: ${res.status}`);
+  return res.json();
 }
 
 export async function submitHermesValidation(
@@ -283,7 +291,7 @@ export async function fetchProposedMission(): Promise<ProposedMissionResponse> {
 export interface AgentsStatusResponse {
   doctor_ok: boolean;
   agents: Array<{ agent: string; provider: string; available: boolean }>;
-  current_agent: { requested_agent: string; executed_by: string; fallback_used: boolean; delegation_status: string };
+  current_agent: { requested_agent: string; executed_by: string; fallback_used: boolean; delegation_status: string; session_log_available: boolean };
   mission_in_progress: { active: boolean; request_summary: string | null; project_id: string | null };
 }
 

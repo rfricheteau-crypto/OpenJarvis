@@ -36,6 +36,7 @@ import {
   fetchAgentsStatus,
   fetchProjectBlocks,
   fetchProposedMission,
+  fetchSessionLog,
   prepareExecution,
   sendPersonalCockpitChat,
   submitHermesValidation,
@@ -1002,10 +1003,48 @@ function AlertesDetail({
 // Panneau "Agents / Système" — demande Ruth 2026-08-31 (fusion Jarvis G +
 // ancien Jarvis) : petit espace de contrôle secondaire, accessible depuis
 // une tuile, jamais sur la Home. Lecture seule, données réelles.
+// Phase 3 — Ruth (2026-08-31) : "vérifier facilement que la mission a bien
+// été envoyée dans la vraie session/terminal de l'agent concerné." Overlay
+// simple, lecture seule, transcript brut complet.
+function SessionLogModal({ onClose }: { onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSessionLog()
+      .then((result) => {
+        setContent(result.available ? result.content : 'Aucune session enregistrée pour l\'instant.');
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Impossible de lire la session'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="g-session-overlay" role="dialog" aria-modal="true" aria-labelledby="session-log-title">
+      <div className="g-session-modal">
+        <div className="g-session-modal-head">
+          <h2 id="session-log-title">Session réelle — dernière exécution</h2>
+          <button type="button" className="d-ghost-btn d-ghost-btn-icon" onClick={onClose} aria-label="Fermer">✕</button>
+        </div>
+        {loading ? (
+          <p className="g-system-note">Lecture…</p>
+        ) : error ? (
+          <p className="g-system-down">{error}</p>
+        ) : (
+          <pre className="g-session-log-text">{content}</pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SystemeDetail({ onBack }: { onBack: () => void }) {
   const [status, setStatus] = useState<AgentsStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showSessionLog, setShowSessionLog] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1067,11 +1106,18 @@ function SystemeDetail({ onBack }: { onBack: () => void }) {
                   <strong>Dernière exécution</strong>
                 </div>
                 {status?.current_agent.executed_by ? (
-                  <p className={status.current_agent.fallback_used ? 'g-system-warn' : 'g-system-ok'}>
-                    {status.current_agent.fallback_used
-                      ? `⚠️ ${status.current_agent.requested_agent} indisponible → ${status.current_agent.executed_by}`
-                      : `● Traité par ${status.current_agent.executed_by}`}
-                  </p>
+                  <>
+                    <p className={status.current_agent.fallback_used ? 'g-system-warn' : 'g-system-ok'}>
+                      {status.current_agent.fallback_used
+                        ? `⚠️ ${status.current_agent.requested_agent} indisponible → ${status.current_agent.executed_by}`
+                        : `● Traité par ${status.current_agent.executed_by}`}
+                    </p>
+                    {status.current_agent.session_log_available ? (
+                      <button type="button" className="g-session-link" onClick={() => setShowSessionLog(true)}>
+                        Voir la session/terminal
+                      </button>
+                    ) : null}
+                  </>
                 ) : (
                   <p className="g-system-note">Aucune exécution réelle enregistrée pour l'instant.</p>
                 )}
@@ -1093,6 +1139,7 @@ function SystemeDetail({ onBack }: { onBack: () => void }) {
           )}
         </section>
       </main>
+      {showSessionLog ? <SessionLogModal onClose={() => setShowSessionLog(false)} /> : null}
     </div>
   );
 }
@@ -1528,7 +1575,8 @@ function VariantG({
   const [proposedRoute, setProposedRoute] = useState<Record<string, any> | null>(null);
   const [proposedMissionAt, setProposedMissionAt] = useState<string | null>(null);
   const [preparingExecution, setPreparingExecution] = useState(false);
-  const [lastAgentInfo, setLastAgentInfo] = useState<{ requested_agent: string; executed_by: string; fallback_used: boolean } | null>(null);
+  const [lastAgentInfo, setLastAgentInfo] = useState<{ requested_agent: string; executed_by: string; fallback_used: boolean; session_log_available?: boolean } | null>(null);
+  const [showSessionLog, setShowSessionLog] = useState(false);
   const [previewPrompt, setPreviewPrompt] = useState<string | null>(null);
   const [previewAgent, setPreviewAgent] = useState<string | null>(null);
 
@@ -1734,13 +1782,20 @@ function VariantG({
               {!approving ? <ChevronRight size={15} /> : null}
             </button>
             {lastAgentInfo ? (
-              <p className={`g-agent-result${lastAgentInfo.fallback_used ? ' g-agent-result-fallback' : ''}`}>
-                {lastAgentInfo.fallback_used ? (
-                  <>⚠️ <strong>{lastAgentInfo.requested_agent}</strong> indisponible → bascule vers <strong>{lastAgentInfo.executed_by}</strong></>
-                ) : (
-                  <>✅ Envoyé à <strong>{lastAgentInfo.executed_by}</strong></>
-                )}
-              </p>
+              <>
+                <p className={`g-agent-result${lastAgentInfo.fallback_used ? ' g-agent-result-fallback' : ''}`}>
+                  {lastAgentInfo.fallback_used ? (
+                    <>⚠️ <strong>{lastAgentInfo.requested_agent}</strong> indisponible → bascule vers <strong>{lastAgentInfo.executed_by}</strong></>
+                  ) : (
+                    <>✅ Envoyé à <strong>{lastAgentInfo.executed_by}</strong></>
+                  )}
+                </p>
+                {lastAgentInfo.session_log_available ? (
+                  <button type="button" className="g-session-link" onClick={() => setShowSessionLog(true)}>
+                    Voir la session/terminal
+                  </button>
+                ) : null}
+              </>
             ) : null}
             {pendingCount > 0 ? (
               <p className="g-bubble-note">
@@ -1863,6 +1918,7 @@ function VariantG({
           ))}
         </div>
       </main>
+      {showSessionLog ? <SessionLogModal onClose={() => setShowSessionLog(false)} /> : null}
     </div>
   );
 }
@@ -2245,6 +2301,12 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-agent-result{margin:10px 0 0;font-size:12px;color:var(--d-muted);text-align:left}
 .g-agent-result strong{color:var(--d-text);font-weight:600}
 .g-agent-result-fallback{color:#fbbf24}
+.g-session-link{margin-top:4px;background:none;border:none;padding:0;color:#93c5fd;font-size:11px;text-decoration:underline;cursor:pointer}
+.g-session-overlay{position:fixed;inset:0;background:rgba(5,8,20,.72);display:flex;align-items:center;justify-content:center;z-index:80;padding:24px}
+.g-session-modal{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;max-width:720px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+.g-session-modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--d-card-border)}
+.g-session-modal-head h2{margin:0;font-size:15px;color:var(--d-text)}
+.g-session-log-text{margin:0;padding:16px 18px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,monospace;font-size:11.5px;line-height:1.6;color:var(--d-text)}
 .g-mission-card{margin-top:14px;padding:14px 16px;border-radius:14px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);text-align:left}
 .g-mission-eyebrow{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c4b5fd;margin-bottom:6px}
 .g-mission-summary{margin:0 0 6px;font-size:13.5px;color:var(--d-text)}

@@ -3031,6 +3031,7 @@ async def get_agents_status():
             "executed_by": delegation.get("executed_by") or "",
             "fallback_used": bool(delegation.get("fallback_used", False)),
             "delegation_status": delegation.get("delegation_status") or "",
+            "session_log_available": (PERSONAL_ROOT / "runtime" / "hermes" / "sessions" / "latest.log").exists(),
         },
         "mission_in_progress": {
             "active": mission_in_progress,
@@ -3038,6 +3039,32 @@ async def get_agents_status():
             "project_id": (mission.get("project_context") or {}).get("project_id") if mission_in_progress else None,
         },
     }
+
+
+# Phase 3 — Ruth (2026-08-31) : "vérifier facilement que la mission a bien
+# été envoyée dans la vraie session/terminal de l'agent concerné." Lecture
+# seule du transcript brut complet (non tronqué) de la dernière exécution
+# réelle, écrit par agent_bridge.py. Un seul fichier, écrasé à chaque
+# exécution — cohérent avec "une mission à la fois" partout ailleurs.
+_SESSION_LOG_MARKER = "=== Session Hermès — "
+
+
+@router.get("/hermes/session-log")
+async def get_session_log():
+    log_path = PERSONAL_ROOT / "runtime" / "hermes" / "sessions" / "latest.log"
+    if not log_path.exists():
+        return {"available": False, "content": None}
+    content = _safe_read_text(log_path)
+    if content is None:
+        return {"available": False, "content": None}
+    # Défense en profondeur : si plusieurs blocs de session finissent dans
+    # le même fichier (une seule écriture attendue, mais mieux vaut ne
+    # jamais montrer un transcript confus à Ruth) — ne montrer que le
+    # dernier bloc réel.
+    last_marker = content.rfind(_SESSION_LOG_MARKER)
+    if last_marker > 0:
+        content = content[last_marker:]
+    return {"available": True, "content": content}
 
 
 # Aperçu du prompt réel — Ruth (2026-08-31) : "me montrer ce prompt avant
@@ -3173,10 +3200,20 @@ async def hermes_validate(request_body: HermesValidationRequest):
                     exec_result = execute_approved_agent_via_core(PERSONAL_ROOT)
                     if exec_result.get("status") == "executed":
                         executed_flag = True
+                        # Bug réel trouvé par contre-audit Codex (2026-08-31) :
+                        # execute_approved_agent_via_core fait avancer le
+                        # cycle de vie à "result_logged" en interne, mais le
+                        # resolve_validation_via_core plus bas repassait
+                        # "approved_for_handoff" (valeur figée avant
+                        # l'exécution réelle) — écrasant silencieusement le
+                        # bon statut par un ancien. La variable doit refléter
+                        # ce qui s'est réellement passé avant ce dernier appel.
+                        execution_status = "executed"
                         agent_info = {
                             "requested_agent": exec_result.get("requested_agent") or "",
                             "executed_by": exec_result.get("executed_by") or "",
                             "fallback_used": bool(exec_result.get("fallback_used", False)),
+                            "session_log_available": bool(exec_result.get("session_log_available", False)),
                         }
                         result_summary = str(exec_result.get("result_summary") or result_summary)
                         mission = _load_json(CURRENT_MISSION_PATH) or {}
