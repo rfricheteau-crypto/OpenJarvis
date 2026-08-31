@@ -2987,6 +2987,7 @@ async def prepare_execution(request_body: PrepareExecutionRequest):
             executable=None,
             source="mission_prepare_execution",
             prompt=request_body.note.strip() or f"Préparer l'exécution de la mission proposée : {request_summary}",
+            mission_request_id=str(mission.get("request_id") or ""),
         )
     except Exception as exc:
         logger.exception("prepare_execution failed")
@@ -3018,23 +3019,28 @@ async def hermes_validate(request_body: HermesValidationRequest):
             if not has_active_validation:
                 raise RuntimeError("validation_state.active absent")
             approve_delegation_via_core, _, resolve_validation_via_core = _hermes_core_validation_api()
+            approval_result: dict[str, Any] = {}
             try:
-                approve_delegation_via_core(
+                approval_result = approve_delegation_via_core(
                     PERSONAL_ROOT,
                     result_summary=result_summary,
-                )
+                ) or {}
             except Exception as exc:  # pragma: no cover - runtime bridge can be absent.
                 core_warning = f"Approbation délégation Hermès partielle : {exc}"
 
-            # Exécution réelle — décision Ruth explicite 2026-08-30 ("JE VEUX
-            # UNE EXECUTION REELLE"). Uniquement pour les validations créées
-            # par /hermes/prepare-execution (source dédiée) : ne touche pas
-            # les autres flux d'approbation existants (mail, cockpit...).
-            # execute_approved_agent_via_core (Codex) refuse tout seul si
-            # l'approbation/le contexte ne sont pas prêts — pas de garde
-            # supplémentaire nécessaire ici, mais on ne l'appelle que dans
-            # le cas prévu pour rester prévisible.
-            if pending.get("source") == "mission_prepare_execution":
+            # Lien mission <-> validation (2026-08-31, contre-revue Codex) :
+            # si la mission a changé entre "Préparer l'exécution" et
+            # "Approuver" (nouveau message chat entre-temps), approve_delegation_via_core
+            # refuse et NE mute PAS l'état vers approved_for_handoff — on
+            # s'arrête ici plutôt que de laisser execute_approved_agent_via_core
+            # échouer avec un message générique moins clair pour Ruth.
+            if approval_result.get("status") == "mission_mismatch":
+                core_warning = (
+                    "Approbation refusée : la mission a changé depuis la préparation de "
+                    "l'exécution (un nouveau message a été envoyé entre-temps). Relance "
+                    "la préparation pour la mission actuelle avant d'approuver."
+                )
+            elif pending.get("source") == "mission_prepare_execution":
                 try:
                     from hermes_core import execute_approved_agent_via_core
                     exec_result = execute_approved_agent_via_core(PERSONAL_ROOT)
