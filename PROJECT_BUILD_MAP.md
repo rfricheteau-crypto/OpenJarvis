@@ -354,9 +354,25 @@ en usage normal (bouton unique, un seul utilisateur).
 avec Codex dès le départ) : VAD réel sur vraie parole, TTS Kokoro à
 l'oreille, interruption réelle en reparlant.
 
+**TEST HUMAIN RÉEL #2 (Ruth, 2026-08-31 ~23h15)** : "c'est lent, c'est mou,
+ça comprend pas". Bug trouvé en comparant au client de référence de Codex
+déjà validé (`prototypes/hermes-webrtc-poc-v2/web/app.js`, commit `8b86527`) :
+G coupait l'audio sur `user_speaking`/`barge_in_start` mais ne le réarmait
+**jamais** sur `audio_play_start` — une seule coupure rendait Hermès muet
+pour le reste de la conversation. Corrigé (`cutRemoteAudio`/
+`resumeRemoteAudio` symétriques), + résilience `onconnectionstatechange`
+(grâce 2s) + keepalive ping, les deux absents de ma première version et
+présents dans le client déjà prouvé. Testé réellement (Playwright, faux
+micro) : ouverture/accueil/fermeture toujours propres, 0 régression. Le
+cycle réel coupure→reprise n'est pas revérifié par Ruth après ce correctif.
+Honnête : "lent" peut aussi venir de la latence du pipeline STT→LLM→TTS
+lui-même (terrain Codex) — ce correctif règle précisément "devient muet
+après une interruption", pas nécessairement toute lenteur perçue.
+
 **RUTH_DECISION_REQUIRED** : aucune.
-**PROCHAINE ACTION** : test micro humain réel par Ruth — le seul critère de
-validation restant pour ce bloc (VAD, TTS, barge-in en conditions réelles).
+**PROCHAINE ACTION** : Ruth revérifie au micro réel avec ce correctif ; si
+la lenteur persiste sans lien avec le mutisme, orienter vers Codex
+(latence pipeline, terrain runtime).
 
 ---
 
