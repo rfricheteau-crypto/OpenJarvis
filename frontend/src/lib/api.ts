@@ -244,6 +244,7 @@ export interface HermesValidationResponse {
   execution_status: string;
   message: string;
   warning?: string;
+  agent?: { requested_agent: string; executed_by: string; fallback_used: boolean } | null;
 }
 
 export async function submitHermesValidation(
@@ -273,6 +274,22 @@ export interface ProposedMissionResponse {
 export async function fetchProposedMission(): Promise<ProposedMissionResponse> {
   const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes/proposed-mission`);
   if (!res.ok) throw new Error(`Failed to fetch proposed mission: ${res.status}`);
+  return res.json();
+}
+
+// Panneau "Agents / Système" (demande Ruth 2026-08-31) — lecture seule,
+// disponibilité réelle Claude/Codex (présence du binaire, pas le quota),
+// agent en cours, repli, mission en cours.
+export interface AgentsStatusResponse {
+  doctor_ok: boolean;
+  agents: Array<{ agent: string; provider: string; available: boolean }>;
+  current_agent: { requested_agent: string; executed_by: string; fallback_used: boolean; delegation_status: string };
+  mission_in_progress: { active: boolean; request_summary: string | null; project_id: string | null };
+}
+
+export async function fetchAgentsStatus(): Promise<AgentsStatusResponse> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/hermes/agents-status`);
+  if (!res.ok) throw new Error(`Failed to fetch agents status: ${res.status}`);
   return res.json();
 }
 

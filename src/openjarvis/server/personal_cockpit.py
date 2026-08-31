@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 import logging
@@ -29,6 +30,7 @@ VOICE_DIR = PERSONAL_ROOT / "runtime" / "voice"
 WORKING_DIR = PERSONAL_ROOT / "memory" / "working"
 INTEGRATIONS_DIR = PERSONAL_ROOT / "integrations"
 HERMES_DIR = PERSONAL_ROOT / "runtime" / "hermes"
+RUTH_OS_BRIDGE_DIR = Path.home() / "CODEX_RUTH_OS" / "CORE" / "bridge"
 
 STATE_PATH = VOICE_DIR / "v4_state.json"
 SESSIONS_PATH = VOICE_DIR / "v4_sessions.jsonl"
@@ -2961,6 +2963,52 @@ async def get_proposed_mission():
     return {"has_mission": True, "mission": mission, "route": route, "generated_at": generated_at}
 
 
+# Panneau "Agents / Système" (demande Ruth 2026-08-31, fusion Jarvis G +
+# ancien Jarvis) : petit espace de contrôle secondaire, pas sur la Home —
+# disponibilité réelle Claude/Codex, agent en cours, repli éventuel, coût,
+# missions en cours, erreurs. Lecture seule, aucune action.
+@router.get("/hermes/agents-status")
+async def get_agents_status():
+    agents: list[dict[str, Any]] = []
+    doctor_ok = False
+    try:
+        completed = subprocess.run(
+            ["python3", str(RUTH_OS_BRIDGE_DIR / "route_agent.py"), "--doctor"],
+            cwd=RUTH_OS_BRIDGE_DIR, text=True, capture_output=True, timeout=10, check=False,
+        )
+        for line in completed.stdout.splitlines():
+            match = re.match(r"^agent\.(\S+) provider=(\S+) status=(available|unavailable)$", line.strip())
+            if match:
+                agents.append({
+                    "agent": match.group(1),
+                    "provider": match.group(2),
+                    "available": match.group(3) == "available",
+                })
+        doctor_ok = "ROUTER_DOCTOR_OK" in completed.stdout
+    except Exception:
+        logger.exception("route_agent.py --doctor failed")
+
+    delegation = _load_json(HERMES_DIR / "current_delegation.json") or {}
+    mission = _load_json(CURRENT_MISSION_PATH) or {}
+    mission_in_progress = bool(mission) and mission.get("status") == "mission_ready_not_executed"
+
+    return {
+        "doctor_ok": doctor_ok,
+        "agents": agents,
+        "current_agent": {
+            "requested_agent": delegation.get("requested_agent") or delegation.get("delegation_target") or "",
+            "executed_by": delegation.get("executed_by") or "",
+            "fallback_used": bool(delegation.get("fallback_used", False)),
+            "delegation_status": delegation.get("delegation_status") or "",
+        },
+        "mission_in_progress": {
+            "active": mission_in_progress,
+            "request_summary": mission.get("request_summary") if mission_in_progress else None,
+            "project_id": (mission.get("project_context") or {}).get("project_id") if mission_in_progress else None,
+        },
+    }
+
+
 class PrepareExecutionRequest(BaseModel):
     note: str = Field(default="", max_length=2000)
 
@@ -3020,6 +3068,8 @@ async def hermes_validate(request_body: HermesValidationRequest):
     executable_value = str(executable).strip() if executable else None
     note = request_body.note.strip()
     core_warning = ""
+    executed_flag = False
+    agent_info: dict[str, Any] = {}
     validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
     has_active_validation = isinstance(validation_state.get("active"), dict) and bool(validation_state.get("active"))
 
@@ -3056,6 +3106,12 @@ async def hermes_validate(request_body: HermesValidationRequest):
                     from hermes_core import execute_approved_agent_via_core
                     exec_result = execute_approved_agent_via_core(PERSONAL_ROOT)
                     if exec_result.get("status") == "executed":
+                        executed_flag = True
+                        agent_info = {
+                            "requested_agent": exec_result.get("requested_agent") or "",
+                            "executed_by": exec_result.get("executed_by") or "",
+                            "fallback_used": bool(exec_result.get("fallback_used", False)),
+                        }
                         result_summary = str(exec_result.get("result_summary") or result_summary)
                         mission = _load_json(CURRENT_MISSION_PATH) or {}
                         block_ctx = (mission.get("project_context") or {}).get("block") or {}
@@ -3115,9 +3171,15 @@ async def hermes_validate(request_body: HermesValidationRequest):
         return {
             "ok": True,
             "decision": "approve",
-            "executed": False,
+            "executed": executed_flag,
             "execution_status": execution_status,
-            "message": "Validation enregistrée. Aucune action externe n'a été exécutée par le cockpit.",
+            "message": (
+                f"Envoyé à {agent_info.get('executed_by')}."
+                + (" (Codex indisponible → bascule vers Claude.)" if agent_info.get("fallback_used") else "")
+                if executed_flag and agent_info.get("executed_by")
+                else "Validation enregistrée. Aucune action externe n'a été exécutée par le cockpit."
+            ),
+            "agent": agent_info or None,
             "pending_validation": None,
             "last_validated_action": last_validated,
             "resolved_validation": resolved,

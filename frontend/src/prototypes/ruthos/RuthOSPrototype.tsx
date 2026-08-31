@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  Cpu,
   FolderKanban,
   Gauge,
   Home,
@@ -32,12 +33,14 @@ import type { PersonalCockpitSnapshot } from '../../types';
 import {
   fetchPersonalCockpit,
   fetchAdvSnapshot,
+  fetchAgentsStatus,
   fetchProjectBlocks,
   fetchProposedMission,
   prepareExecution,
   sendPersonalCockpitChat,
   submitHermesValidation,
   type AdvSnapshot,
+  type AgentsStatusResponse,
   type ProjectBlock,
 } from '../../lib/api';
 import { useAppStore } from '../../lib/store';
@@ -47,7 +50,7 @@ import { STATUS_COLORS, priorityToStatus, blockStatusMeta, type StatusKey } from
 import { PROJECTS, type ProjectData } from '../../lib/projectsRegistry';
 
 type VariantKey = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
-type DetailKey = 'attente' | 'alertes' | 'projets';
+type DetailKey = 'attente' | 'alertes' | 'projets' | 'systeme';
 
 type RuthOSPrototypeProps = {
   snapshot: PersonalCockpitSnapshot | null;
@@ -86,7 +89,7 @@ function currentVariant(): VariantKey {
 
 function currentDetail(): DetailKey | null {
   const value = new URLSearchParams(window.location.search).get('view');
-  return value === 'attente' || value === 'alertes' || value === 'projets' ? value : null;
+  return value === 'attente' || value === 'alertes' || value === 'projets' || value === 'systeme' ? value : null;
 }
 
 function currentProjectId(): string | null {
@@ -996,6 +999,104 @@ function AlertesDetail({
   );
 }
 
+// Panneau "Agents / Système" — demande Ruth 2026-08-31 (fusion Jarvis G +
+// ancien Jarvis) : petit espace de contrôle secondaire, accessible depuis
+// une tuile, jamais sur la Home. Lecture seule, données réelles.
+function SystemeDetail({ onBack }: { onBack: () => void }) {
+  const [status, setStatus] = useState<AgentsStatusResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetchAgentsStatus()
+      .then((result) => {
+        setStatus(result);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Impossible de vérifier les agents'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="ruth-variant-g">
+      <HomeSidebar />
+      <main className="g-main" id="ruth-main">
+        <div className="d-topbar">
+          <button type="button" className="d-ghost-btn" onClick={onBack}>
+            <ArrowLeft size={15} /> Retour à Hermès
+          </button>
+          <button type="button" className="d-ghost-btn" onClick={load} disabled={loading}>
+            <RefreshCw size={15} className={loading ? 'd-spin' : undefined} /> Vérifier maintenant
+          </button>
+        </div>
+
+        <section className="g-detail" aria-labelledby="systeme-title">
+          <div className="g-detail-heading">
+            <span>Contrôle</span>
+            <h1 id="systeme-title">Agents / Système</h1>
+            <p>Ce qu'Hermès a réellement sous la main en ce moment — vérifié à l'instant, pas une estimation.</p>
+          </div>
+
+          {error ? (
+            <div className="g-empty-state">
+              <ShieldAlert size={21} />
+              <div><strong>Vérification impossible</strong><p>{error}</p></div>
+            </div>
+          ) : (
+            <div className="g-system-grid">
+              {status?.agents.map((agent) => (
+                <article className="g-system-card" key={agent.agent}>
+                  <div className="g-system-card-head">
+                    <Cpu size={16} />
+                    <strong>{agent.agent === 'claude' ? 'Claude' : agent.agent === 'codex' ? 'Codex' : agent.agent}</strong>
+                  </div>
+                  <p className={agent.available ? 'g-system-ok' : 'g-system-down'}>
+                    {agent.available ? '● Installé et joignable' : '● Non joignable'}
+                  </p>
+                  <p className="g-system-note">Fournisseur : {agent.provider}. Ne détecte pas un quota épuisé — seulement si l'outil est présent.</p>
+                </article>
+              ))}
+              <article className="g-system-card">
+                <div className="g-system-card-head">
+                  <Gauge size={16} />
+                  <strong>Dernière exécution</strong>
+                </div>
+                {status?.current_agent.executed_by ? (
+                  <p className={status.current_agent.fallback_used ? 'g-system-warn' : 'g-system-ok'}>
+                    {status.current_agent.fallback_used
+                      ? `⚠️ ${status.current_agent.requested_agent} indisponible → ${status.current_agent.executed_by}`
+                      : `● Traité par ${status.current_agent.executed_by}`}
+                  </p>
+                ) : (
+                  <p className="g-system-note">Aucune exécution réelle enregistrée pour l'instant.</p>
+                )}
+              </article>
+              <article className="g-system-card">
+                <div className="g-system-card-head">
+                  <Clock3 size={16} />
+                  <strong>Mission en cours</strong>
+                </div>
+                {status?.mission_in_progress.active ? (
+                  <p className="g-system-note">
+                    <strong>{status.mission_in_progress.project_id}</strong> — {cleanText(status.mission_in_progress.request_summary, 'Demande en cours')}
+                  </p>
+                ) : (
+                  <p className="g-system-note">Aucune mission en attente d'action.</p>
+                )}
+              </article>
+            </div>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function ProjetsDetail({
   model,
   snapshot,
@@ -1389,6 +1490,7 @@ function VariantG({
   onOpenPending,
   onOpenAlertes,
   onOpenProjets,
+  onOpenSysteme,
   onCloseDetail,
   onOpenProject,
   onBackToProjects,
@@ -1406,6 +1508,7 @@ function VariantG({
   onOpenPending: () => void;
   onOpenAlertes: () => void;
   onOpenProjets: () => void;
+  onOpenSysteme: () => void;
   onCloseDetail: () => void;
   onOpenProject: (id: string) => void;
   onBackToProjects: () => void;
@@ -1425,6 +1528,7 @@ function VariantG({
   const [proposedRoute, setProposedRoute] = useState<Record<string, any> | null>(null);
   const [proposedMissionAt, setProposedMissionAt] = useState<string | null>(null);
   const [preparingExecution, setPreparingExecution] = useState(false);
+  const [lastAgentInfo, setLastAgentInfo] = useState<{ requested_agent: string; executed_by: string; fallback_used: boolean } | null>(null);
 
   const refreshProposedMission = useCallback(async () => {
     try {
@@ -1533,6 +1637,9 @@ function VariantG({
       const result = await submitHermesValidation('approve');
       toast.success(result.message || 'Validation Hermès enregistrée');
       if (result.warning) toast.warning(result.warning);
+      // Persistant, pas juste le toast qui disparaît — Ruth (2026-08-31) :
+      // "je veux toujours savoir quel agent travaille réellement".
+      if (result.agent?.executed_by) setLastAgentInfo(result.agent);
       await onRefresh?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Validation Hermès impossible');
@@ -1553,6 +1660,7 @@ function VariantG({
 
   if (detail === 'attente') return <PendingValidationsDetail snapshot={snapshot} onBack={onCloseDetail} />;
   if (detail === 'alertes') return <AlertesDetail snapshot={snapshot} onBack={onCloseDetail} />;
+  if (detail === 'systeme') return <SystemeDetail onBack={onCloseDetail} />;
   if (detail === 'projets' && projectId && PROJECTS[projectId] && blockNum) {
     return (
       <BlockDetail
@@ -1592,9 +1700,14 @@ function VariantG({
               {lastUpdatedAt ? ` — à jour à ${new Date(lastUpdatedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : ''}
             </span>
           )}
-          <button type="button" className="d-ghost-btn" onClick={handleRefresh} disabled={refreshing || !onRefresh}>
-            <RefreshCw size={15} className={refreshing ? 'd-spin' : undefined} /> Actualiser
-          </button>
+          <div className="d-topbar-actions">
+            <button type="button" className="d-ghost-btn d-ghost-btn-icon" onClick={onOpenSysteme} title="Agents / Système — contrôle secondaire">
+              <Cpu size={15} />
+            </button>
+            <button type="button" className="d-ghost-btn" onClick={handleRefresh} disabled={refreshing || !onRefresh}>
+              <RefreshCw size={15} className={refreshing ? 'd-spin' : undefined} /> Actualiser
+            </button>
+          </div>
         </div>
 
         <section className="g-conversation">
@@ -1610,9 +1723,18 @@ function VariantG({
               disabled={!actionableValidation || approving}
               title={actionableValidation ? 'Approuve la validation Hermès active (réel)' : "Aucune validation active à approuver pour l'instant"}
             >
-              {approving ? 'Enregistrement…' : actionableValidation ? 'Approuver cette validation' : 'Rien à approuver maintenant'}
+              {approving ? 'Envoi…' : actionableValidation ? 'Approuver et envoyer' : 'Rien à approuver maintenant'}
               {!approving ? <ChevronRight size={15} /> : null}
             </button>
+            {lastAgentInfo ? (
+              <p className={`g-agent-result${lastAgentInfo.fallback_used ? ' g-agent-result-fallback' : ''}`}>
+                {lastAgentInfo.fallback_used ? (
+                  <>⚠️ <strong>{lastAgentInfo.requested_agent}</strong> indisponible → bascule vers <strong>{lastAgentInfo.executed_by}</strong></>
+                ) : (
+                  <>✅ Envoyé à <strong>{lastAgentInfo.executed_by}</strong></>
+                )}
+              </p>
+            ) : null}
             {pendingCount > 0 ? (
               <p className="g-bubble-note">
                 <StatusPill status="validation" label={String(pendingCount)} /> Il y a aussi {pendingCount} décision{pendingCount > 1 ? 's' : ''} qui attend{pendingCount > 1 ? 'ent' : ''} ton avis.
@@ -1632,6 +1754,7 @@ function VariantG({
                 ) : null}
                 <p className="g-mission-agent">
                   Agent recommandé : <strong>{proposedRoute?.route?.lead?.agent ?? proposedMission.recommended_agent ?? 'à déterminer'}</strong>
+                  {proposedRoute?.route?.task_reason ? <> — {proposedRoute.route.task_reason}</> : null}
                 </p>
                 <button
                   type="button"
@@ -1639,7 +1762,7 @@ function VariantG({
                   onClick={() => void handlePrepareExecution()}
                   disabled={preparingExecution}
                 >
-                  {preparingExecution ? 'Préparation…' : "Préparer l'exécution"}
+                  {preparingExecution ? 'Préparation…' : 'Préparer avec Hermès'}
                 </button>
               </div>
             ) : null}
@@ -1888,6 +2011,7 @@ export function RuthOSPrototype({ snapshot, onRefresh, connectionError, lastUpda
           onOpenPending={() => selectDetail('attente')}
           onOpenAlertes={() => selectDetail('alertes')}
           onOpenProjets={() => selectDetail('projets')}
+          onOpenSysteme={() => selectDetail('systeme')}
           onCloseDetail={() => selectDetail(null)}
           onOpenProject={selectProject}
           onBackToProjects={backToProjects}
@@ -1989,6 +2113,8 @@ const RUTH_OS_VARIANT_D_STYLES = `
 .d-topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px}
 .d-status-line{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.05em}
 .d-ghost-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;background:transparent;border:1px solid var(--d-card-border);color:var(--d-text);border-radius:10px;padding:8px 12px;font-size:12px}
+.d-topbar-actions{display:flex;gap:8px;align-items:center}
+.d-ghost-btn-icon{min-width:44px;padding:8px}
 .d-hero{position:relative;background:radial-gradient(120% 160% at 18% 0%,#141c3c 0%,var(--d-bg2) 55%,var(--d-bg) 100%);border:1px solid var(--d-card-border);border-radius:22px;padding:40px 36px;margin-bottom:20px;overflow:hidden}
 .d-orb-big{width:150px;height:150px;border-radius:50%;margin:0 auto 22px;background:radial-gradient(circle at 32% 28%,#a9c3ff,#5b6ff0 45%,#7b3fe4 85%);box-shadow:0 0 60px rgba(99,102,241,.55),0 0 140px rgba(139,92,246,.25)}
 .d-hero h1{text-align:center;font-size:clamp(24px,3vw,34px);font-weight:600;line-height:1.25;margin:0 0 12px}
@@ -2102,6 +2228,9 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-bubble-detail{margin:0 0 14px;font-size:13px;color:var(--d-muted);line-height:1.5}
 .g-bubble-note{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#c3c9e6;background:rgba(139,92,246,.08);border:1px solid rgba(196,181,253,.25);border-radius:11px;padding:9px 12px;margin:0 0 16px}
 .g-bubble-cta{margin:2px 0 14px}
+.g-agent-result{margin:10px 0 0;font-size:12px;color:var(--d-muted);text-align:left}
+.g-agent-result strong{color:var(--d-text);font-weight:600}
+.g-agent-result-fallback{color:#fbbf24}
 .g-mission-card{margin-top:14px;padding:14px 16px;border-radius:14px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);text-align:left}
 .g-mission-eyebrow{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c4b5fd;margin-bottom:6px}
 .g-mission-summary{margin:0 0 6px;font-size:13.5px;color:var(--d-text)}
@@ -2128,6 +2257,7 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-tile strong{font-size:14px}
 .g-tile span:last-child{font-size:11.5px;color:var(--d-muted);line-height:1.35}
 .g-detail{max-width:880px;margin:0 auto;padding:18px 0 56px}.g-detail-heading{padding:22px 0 26px}.g-detail-heading>span,.g-pending-action>span{display:block;color:#aeb9e8;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}.g-detail-heading h1{font-size:clamp(30px,4vw,46px);line-height:1.05;margin:8px 0 10px}.g-detail-heading p{margin:0;color:var(--d-muted);font-size:14px;line-height:1.5;max-width:580px}.g-pending-list{display:grid;gap:12px}.g-pending-item{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:18px}.g-pending-item-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.g-pending-project{display:block;color:#aeb9e8;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px}.g-pending-item h2{font-size:17px;line-height:1.25;margin:0}.g-pending-item>p{margin:13px 0;color:var(--d-muted);font-size:13px;line-height:1.5}.g-pending-action{border-top:1px solid var(--d-card-border);padding-top:12px}.g-pending-action strong{display:block;margin-top:5px;font-size:13px;line-height:1.4}.g-empty-state{display:flex;gap:12px;align-items:flex-start;background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:20px;color:#86efac}.g-empty-state strong{display:block;color:var(--d-text);margin-bottom:4px}.g-empty-state p{margin:0;color:var(--d-muted);font-size:13px}
+.g-system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.g-system-card{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:16px}.g-system-card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--d-text)}.g-system-card-head strong{font-size:14px}.g-system-ok{color:#86efac;font-size:13px;margin:0 0 6px}.g-system-down{color:#fca5a5;font-size:13px;margin:0 0 6px}.g-system-warn{color:#fbbf24;font-size:13px;margin:0 0 6px}.g-system-note{color:var(--d-muted);font-size:12px;margin:0;line-height:1.5}
 .g-pending-item-clickable{width:100%;text-align:left;cursor:pointer;font:inherit;transition:transform .16s ease,border-color .16s ease}.g-pending-item-clickable:hover{transform:translateY(-2px);border-color:#5965a6}.g-pending-item-clickable:focus-visible{outline:2px solid var(--d-blue);outline-offset:3px}.g-pending-item-more{display:inline-flex;align-items:center;gap:4px;margin-top:10px;font-size:12px;color:#aeb9e8}
 .g-detail-subheading{margin:26px 0 12px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#aeb9e8}
 .g-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.g-stat{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:14px;padding:14px}.g-stat span{display:block;font-size:11px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.06em}.g-stat strong{display:block;margin-top:4px;font-size:19px;color:var(--d-text)}.g-stat em{display:block;margin-top:2px;font-size:11px;font-style:normal;color:var(--d-muted)}
