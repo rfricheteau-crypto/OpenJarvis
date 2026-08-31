@@ -240,6 +240,27 @@ de coder, pas juste décidé seul.
 
 **PROCHAINE ACTION** : aucune urgente — Bloc 03 `TESTED`. Reste ouvert si Ruth le souhaite : traduire le détail des items de checklist ADV (actuellement laissé en anglais, décision explicite 2026-08-30) ; enrichir le Bloc 8 (aucune correspondance checklist trouvée).
 
+**BUG BLOQUANT GO LIVE — TROUVÉ ET CORRIGÉ (2026-08-31)** : Ruth a signalé
+que "Travailler ce bloc avec Hermès" (bouton `BlockDetail`) et "Demander à
+Hermès" (bouton `ProjectDetail`) ne faisaient rien de visible. Cause
+confirmée : les deux étaient câblés `onOpenHermes={onCloseDetail}` — un
+simple retour à l'accueil, sans aucun message envoyé à Hermès. Corrigé
+(`frontend/src/prototypes/ruthos/RuthOSPrototype.tsx`, commit `5076db2`) :
+le clic construit maintenant un message avec le vrai contexte (projet,
+numéro de bloc, nom, objectif, prochaine action) et l'envoie via le chat
+déjà câblé (`handleSend`), qui retombe sur la chaîne déjà prouvée
+(observateur → mission proposée → Préparer avec Hermès → approbation).
+**Testé réellement** (Playwright, clic navigateur, pas juste écrit) sur
+Jarvis bloc 05 : `current_mission.json` confirme
+`project_domain=JARVIS`, `project_context.project_id=jarvis`,
+`block.num=05` — résolution exacte du bloc cliqué. 0 erreur console sur
+les deux boutons.
+**Limite connue, non corrigée** : la classification du domaine reste par
+mot-clé texte (Jarvis/Pedro/ADV seulement) — EduPilot, Caisse Alliance de
+Dreux, Ma Buvette Mobile, ABG, Obsidian, Graphify, Valéna ne sont pas
+reconnus, ce bouton partirait à tort vers Jarvis sur leurs blocs. Hors
+périmètre de cette correction (Ruth a priorisé Jarvis/Hermès).
+
 ---
 
 ## BLOCK 04 — Cockpit voix (Kokoro/STT/Pipecat)
@@ -250,13 +271,22 @@ de coder, pas juste décidé seul.
 
 **CE QUI EXISTE** : backend voix (Kokoro TTS, STT faster-whisper) opérationnel ; ancien écran `JarvisPersonalPage.tsx` avec micro manuel complet ; hook `useHermesSpeaker` extrait et réutilisable (2026-08-30) ; micro manuel ajouté dans Home G, testé Playwright réel (44px, cycle idle→recording→idle propre, aucune régression texte). POC Pipecat V2 (WebRTC, barge-in) démarre, raccordement corrigé et compile.
 
-**CE QUI MANQUE** : test humain réel sur navigateur (voix, transcription, écoute Kokoro) — ne peut pas être validé sans Ruth. Test micro WebRTC réel du POC V2 non fait.
+**CE QUI MANQUE** : G emploie aujourd'hui une dictée `MediaRecorder` arrêtée
+manuellement, pas le runtime conversationnel WebRTC/Pipecat : une session
+vocale persistante (VAD fin de parole, réponse orale, barge-in, reprise) reste
+à intégrer. Le test humain réel navigateur (voix, transcription, écoute
+Kokoro, interruption) reste requis; le POC V2 seul ne le valide pas.
 
 **DERNIÈRE REVUE CLAUDE** : 2026-08-30, micro G ajouté et vérifié Playwright réel (voir `CORE/HANDOFFS/2026-08-30_CODEX_voice-home-g-coordination.md`).
-**DERNIÈRE REVUE CODEX** : lu, non dupliqué (2026-08-31) — contre-revue technique + test humain avec Ruth encore à faire.
+**DERNIÈRE REVUE CODEX** : 2026-08-31 — diagnostic prouvé : le micro G appelle
+`startRecording()`/`stopRecording()`/transcription, tandis que le POC V2
+possède VAD + barge-in. POC relancé, smoke WebRTC et compilation OK; aucune
+preuve micro/voix/barge-in en headless. Détail :
+`HANDOFFS/2026-08-31_Codex_voice-mission-audit-needs-claude-ui.md`.
 
 **RUTH_DECISION_REQUIRED** : aucune — juste le test humain à faire quand Ruth a un moment.
-**PROCHAINE ACTION** : Codex fait sa contre-revue technique, puis Ruth teste au micro réel.
+**PROCHAINE ACTION** : Claude raccorde G au contrat de session vocale continue
+validé avec Codex, puis un seul test micro réel Ruth valide l'interruption.
 
 ---
 
@@ -270,12 +300,20 @@ de coder, pas juste décidé seul.
 
 **CE QUI MANQUE** : le chat du quotidien (`personal_cockpit.py`) appelle un LLM directement, sans passer par `decision_engine.py`/`mission.py` — l'orchestrateur tourne en observation asynchrone seule (jamais de validation créée par ce chemin, par sécurité), pas encore branché à la réponse réelle. 3 systèmes de routage distincts coexistent sans être unifiés : `hermes_core/orchestrator` (plan seul), `CORE/bridge/route_agent.py` (exécution réelle Claude/Codex), et un ancien `~/.openjarvis/jarvis-personal/routing/*.toml` (config orpheline, jamais lue par aucun code) — **archivé le 2026-08-31** vers `_ARCHIVE_unused/routing_archived-2026-08-31/`, décision Ruth, réversible.
 
-**BUGS CONNUS** : aucun bloquant.
+**BUGS CONNUS** : l'affichage de mission confond la demande courante (singleton
+`current_mission.json`) et le dernier cycle exécuté
+(`validation_state.last_resolved`). Ainsi une nouvelle consultation Pedro peut
+afficher « rien n'est lancé » alors que le Bloc 20 est déjà `TESTED`. Ce n'est
+pas un cache; l'UI doit distinguer état du bloc, consultation en cours et
+historique d'exécution par `request_id`.
 
 **TESTS** : pytest hermes_core (mission, policy, orchestrator) verts d'après Codex ; exécution réelle testée manuellement 2 fois (Pedro bloc Sécurité).
 
 **DERNIÈRE REVUE CLAUDE** : 2026-08-31, cartographie complète — voir `CORE/AUDITS/2026-08-31_CLAUDE_cartographie-globale-ruthos-hermes-jarvis.md`.
-**DERNIÈRE REVUE CODEX** : construction directe (2026-08-30, étapes 1-5 go-live), pas encore de retour sur cette cartographie.
+**DERNIÈRE REVUE CODEX** : 2026-08-31 — API G rejouée : Bloc 20 `TESTED`,
+nouvelle mission `mission_ready_not_executed`, dernier résultat séparé
+`MISSION_TEST_RECU + TESTED`. Tests ciblés 10/10. Détail :
+`HANDOFFS/2026-08-31_Codex_voice-mission-audit-needs-claude-ui.md`.
 
 **RUTH_DECISION_REQUIRED** : brancher le chat quotidien à l'orchestrateur (au-delà de l'observation) — décision à prendre, pas commencé.
 **PROCHAINE ACTION** : décider si/quand brancher `decision_engine.py` au chat réel ; supprimer ou fusionner `routing/*.toml`.
