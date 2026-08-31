@@ -14,15 +14,18 @@ import {
   FolderKanban,
   Gauge,
   Home,
+  Loader2,
   MessageCircle,
   MessagesSquare,
   Mic,
+  MicOff,
   MoreHorizontal,
   Plus,
   RefreshCw,
   Settings,
   ShieldAlert,
   Sparkles,
+  Volume2,
 } from 'lucide-react';
 
 import type { PersonalCockpitSnapshot } from '../../types';
@@ -38,6 +41,8 @@ import {
   type ProjectBlock,
 } from '../../lib/api';
 import { useAppStore } from '../../lib/store';
+import { useSpeech } from '../../hooks/useSpeech';
+import { useHermesSpeaker } from '../../hooks/useHermesSpeaker';
 import { STATUS_COLORS, priorityToStatus, blockStatusMeta, type StatusKey } from './designSystem';
 import { PROJECTS, type ProjectData } from '../../lib/projectsRegistry';
 
@@ -1428,8 +1433,11 @@ function VariantG({
     void refreshProposedMission();
   }, [refreshProposedMission]);
 
-  const handleSend = useCallback(async () => {
-    const message = chatInput.trim();
+  const speech = useSpeech();
+  const { isSpeaking, speak, stopSpeaking } = useHermesSpeaker();
+
+  const handleSend = useCallback(async (messageOverride?: string, channel: 'voice' | 'text' = 'text') => {
+    const message = (messageOverride ?? chatInput).trim();
     if (!message || sending) return;
     setSending(true);
     try {
@@ -1437,6 +1445,9 @@ function VariantG({
       setChatReply(result.reply);
       setChatInput('');
       if (result.warning) toast.warning(result.warning);
+      // Seule la voix déclenche la lecture audio de la réponse — le texte
+      // reste silencieux comme avant l'ajout du micro (pas de régression).
+      if (channel === 'voice' && result.reply) void speak(result.reply, true);
       // L'observateur Hermès tourne en tâche de fond côté serveur — laisser
       // un court délai avant de relire la mission proposée qu'il prépare.
       setTimeout(() => void refreshProposedMission(), 900);
@@ -1445,7 +1456,50 @@ function VariantG({
     } finally {
       setSending(false);
     }
-  }, [chatInput, sending, refreshProposedMission]);
+  }, [chatInput, sending, refreshProposedMission, speak]);
+
+  const handleMicClick = useCallback(async () => {
+    // Anti-écho : un clic micro ne laisse jamais Hermès parler par-dessus Ruth.
+    if (isSpeaking) stopSpeaking({ silent: true });
+
+    if (speech.isRecording) {
+      try {
+        const transcript = await speech.stopRecording();
+        if (!transcript.trim()) {
+          toast.warning('Aucune parole détectée, réessaie ou utilise le texte.');
+          return;
+        }
+        void handleSend(transcript, 'voice');
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Transcription impossible, utilise le texte.');
+      }
+      return;
+    }
+
+    if (!speech.available) {
+      toast.error('Service de transcription indisponible pour le moment, utilise le texte.');
+      return;
+    }
+
+    try {
+      await speech.startRecording();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('permission denied')) {
+        toast.error('Micro refusé par le navigateur, utilise le texte.');
+      } else {
+        toast.error('Impossible d’accéder au micro, utilise le texte.');
+      }
+    }
+  }, [handleSend, isSpeaking, speech, stopSpeaking]);
+
+  const micLabel = speech.isTranscribing
+    ? 'Transcription en cours'
+    : speech.isRecording
+      ? 'Arrêter l’écoute'
+      : isSpeaking
+        ? 'Hermès parle'
+        : 'Parler à Hermès';
 
   const handlePrepareExecution = useCallback(async () => {
     if (preparingExecution) return;
@@ -1584,6 +1638,24 @@ function VariantG({
               />
               <button
                 type="button"
+                className={`g-mic-btn${speech.isRecording ? ' g-mic-btn-recording' : ''}${isSpeaking ? ' g-mic-btn-speaking' : ''}`}
+                onClick={() => void handleMicClick()}
+                disabled={sending || speech.isTranscribing}
+                aria-label={micLabel}
+                title={micLabel}
+              >
+                {speech.isTranscribing ? (
+                  <Loader2 size={16} className="d-spin" />
+                ) : isSpeaking ? (
+                  <Volume2 size={16} />
+                ) : speech.isRecording ? (
+                  <MicOff size={16} />
+                ) : (
+                  <Mic size={16} />
+                )}
+              </button>
+              <button
+                type="button"
                 className="g-send-btn"
                 onClick={() => void handleSend()}
                 disabled={sending || !chatInput.trim()}
@@ -1592,6 +1664,11 @@ function VariantG({
                 <ChevronRight size={16} />
               </button>
             </div>
+            {speech.isRecording || speech.isTranscribing || isSpeaking ? (
+              <p className="g-mic-status">
+                {speech.isRecording ? 'Écoute en cours…' : speech.isTranscribing ? 'Transcription…' : 'Hermès parle…'}
+              </p>
+            ) : null}
           </div>
         </section>
 
@@ -1996,10 +2073,15 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-mission-cta{margin-top:8px;padding:8px 14px;border-radius:10px;border:1px solid rgba(167,139,250,.4);background:rgba(167,139,250,.16);color:#c4b5fd;font-size:12.5px;cursor:pointer}
 .g-mission-cta:hover{background:rgba(167,139,250,.26)}
 .g-mission-cta:disabled{opacity:.6;cursor:not-allowed}
-.g-bubble-input{display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:4px;padding-top:14px;border-top:1px solid var(--d-card-border)}
+.g-bubble-input{display:grid;grid-template-columns:1fr auto auto;gap:10px;margin-top:4px;padding-top:14px;border-top:1px solid var(--d-card-border)}
 .g-bubble-input input{height:44px;border-radius:11px;border:1px solid var(--d-card-border);background:var(--d-bg);color:var(--d-text);padding:0 12px;font-size:13px}
-.g-send-btn{width:44px;height:44px;border:1px solid var(--d-card-border);border-radius:11px;background:transparent;color:var(--d-muted);display:grid;place-items:center}
+.g-send-btn,.g-mic-btn{width:44px;height:44px;border:1px solid var(--d-card-border);border-radius:11px;background:transparent;color:var(--d-muted);display:grid;place-items:center}
 .g-send-btn:not(:disabled){color:#fff;background:linear-gradient(135deg,#3b82f6,#6d5bf0);border-color:transparent}
+.g-mic-btn:not(:disabled):hover{color:var(--d-text);border-color:#324066}
+.g-mic-btn-recording{color:#fff;background:linear-gradient(135deg,#ef4444,#f97316);border-color:transparent;animation:g-mic-pulse 1.4s ease-in-out infinite}
+.g-mic-btn-speaking{color:#fff;background:linear-gradient(135deg,#8b5cf6,#3b82f6);border-color:transparent}
+@keyframes g-mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.35)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
+.g-mic-status{margin:8px 0 0;font-size:12px;color:var(--d-muted);text-align:right}
 @keyframes d-spin{to{transform:rotate(360deg)}}
 .d-spin{animation:d-spin .8s linear infinite}
 .g-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}

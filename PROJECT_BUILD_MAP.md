@@ -239,11 +239,158 @@ de coder, pas juste décidé seul.
 
 ---
 
-## BLOCK 04 — Reste d'OpenJarvis (non cartographié)
+## BLOCK 04 — Cockpit voix (Kokoro/STT/Pipecat)
 
-**STATUT** : non applicable — périmètre volontairement exclu de ce fichier pour l'instant (`hermes_core/`, backend `personal_cockpit.py`, pages `Settings`/`Logs`/`Agents`/`DataSources`/`Chat`, `routing/*.toml`). À cartographier séparément si Ruth le demande — ne pas improviser une couverture large juste pour "faire complet".
+**OBJECTIF** : permettre à Ruth de parler à Hermès depuis les écrans OpenJarvis (ancien écran + Home G).
 
-**Note technique voix 2026-08-29** : diagnostic isolé réalisé sans élargir le
-bloc Cockpit. Backend, Kokoro, STT et POC Pipecat V2 démarrent. Le raccordement
-barge-in manquant dans le POC a été corrigé et compile ; le test micro WebRTC
-réel reste requis. Détail : `CODEX_RUTH_OS/CORE/HANDOFFS/2026-08-29_CODEX_voice-runtime-barge-in.md`.
+**STATUT GLOBAL** : `IN_PROGRESS`.
+
+**CE QUI EXISTE** : backend voix (Kokoro TTS, STT faster-whisper) opérationnel ; ancien écran `JarvisPersonalPage.tsx` avec micro manuel complet ; hook `useHermesSpeaker` extrait et réutilisable (2026-08-30) ; micro manuel ajouté dans Home G, testé Playwright réel (44px, cycle idle→recording→idle propre, aucune régression texte). POC Pipecat V2 (WebRTC, barge-in) démarre, raccordement corrigé et compile.
+
+**CE QUI MANQUE** : test humain réel sur navigateur (voix, transcription, écoute Kokoro) — ne peut pas être validé sans Ruth. Test micro WebRTC réel du POC V2 non fait.
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-30, micro G ajouté et vérifié Playwright réel (voir `CORE/HANDOFFS/2026-08-30_CODEX_voice-home-g-coordination.md`).
+**DERNIÈRE REVUE CODEX** : lu, non dupliqué (2026-08-31) — contre-revue technique + test humain avec Ruth encore à faire.
+
+**RUTH_DECISION_REQUIRED** : aucune — juste le test humain à faire quand Ruth a un moment.
+**PROCHAINE ACTION** : Codex fait sa contre-revue technique, puis Ruth teste au micro réel.
+
+---
+
+## BLOCK 05 — Orchestration Hermès (hermes_core)
+
+**OBJECTIF** : que la conversation Hermès du quotidien passe réellement par un raisonnement structuré (intention → outils → décision → validation), pas seulement par un appel LLM direct.
+
+**STATUT GLOBAL** : `RUTH_DECISION_REQUIRED`.
+
+**CE QUI EXISTE** : `hermes_core/orchestrator/` (decision_engine.py, mission.py, agent_bridge.py, engine.py) — classifieur d'intention réel, construction de mission structurée réelle, `policy/engine.py` + `policies/action_classes.toml`/`risk_matrix.toml` (paliers de risque réels, défaut prudent). Le pont d'exécution (`agent_bridge.py` → `CORE/bridge/route_agent.py`) est **prouvé de bout en bout à deux reprises** : chat → mission → approbation → exécution réelle → preuve écrite dans le projet, avec repli automatique Codex→Claude si quota épuisé (2026-08-30, non encore relu par Codex).
+
+**CE QUI MANQUE** : le chat du quotidien (`personal_cockpit.py`) appelle un LLM directement, sans passer par `decision_engine.py`/`mission.py` — l'orchestrateur tourne en observation asynchrone seule (jamais de validation créée par ce chemin, par sécurité), pas encore branché à la réponse réelle. 3 systèmes de routage distincts coexistent sans être unifiés : `hermes_core/orchestrator` (plan seul), `CORE/bridge/route_agent.py` (exécution réelle Claude/Codex), et un ancien `~/.openjarvis/jarvis-personal/routing/*.toml` (config orpheline, jamais lue par aucun code) — **archivé le 2026-08-31** vers `_ARCHIVE_unused/routing_archived-2026-08-31/`, décision Ruth, réversible.
+
+**BUGS CONNUS** : aucun bloquant.
+
+**TESTS** : pytest hermes_core (mission, policy, orchestrator) verts d'après Codex ; exécution réelle testée manuellement 2 fois (Pedro bloc Sécurité).
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31, cartographie complète — voir `CORE/AUDITS/2026-08-31_CLAUDE_cartographie-globale-ruthos-hermes-jarvis.md`.
+**DERNIÈRE REVUE CODEX** : construction directe (2026-08-30, étapes 1-5 go-live), pas encore de retour sur cette cartographie.
+
+**RUTH_DECISION_REQUIRED** : brancher le chat quotidien à l'orchestrateur (au-delà de l'observation) — décision à prendre, pas commencé.
+**PROCHAINE ACTION** : décider si/quand brancher `decision_engine.py` au chat réel ; supprimer ou fusionner `routing/*.toml`.
+
+---
+
+## BLOCK 06 — Mémoire Hermès (contexte, décisions, projet)
+
+**OBJECTIF** : que Hermès dispose d'un contexte à jour (Obsidian, décisions, projet, session) pour raisonner et répondre.
+
+**STATUT GLOBAL** : `TESTED`.
+
+**CE QUI EXISTE** : `hermes_core/memory/` (context_builder.py, decision_memory.py, obsidian_memory.py, project_memory.py, session_memory.py) — lecture réelle du vault Obsidian, du journal de décisions markdown, de l'état projet et des handoffs de session, assemblés dans `memory_context.json`. `journal/hermes_events.jsonl` et `journal/actions.jsonl` écrits en continu (vérifié, horodatage du jour même). **Branché le 2026-08-31** : `refresh_memory_context()` appelée depuis `_hermes_core_capabilities_snapshot()` dans `personal_cockpit.py`, exposée dans `hermes.capabilities.memory` de la réponse API. Choix technique : à la demande (déclenché par le même chemin que le bouton "Actualiser" et les rafraîchissements après action, pas de polling continu) — Codex confirmé via le pont qu'aucune raison de performance n'était documentée contre le branchement.
+
+**CE QUI MANQUE** : `memory/indexes/obsidian_*.json` (45 fichiers, cache distinct) dormant depuis le 13 mai — pas rafraîchi par ce branchement, à part.
+
+**TESTS** : vérifié en direct sur le serveur réel — `curl /v1/personal-cockpit` renvoie `hermes.capabilities.memory` avec 4 clés réelles (session_handoffs, obsidian_bundle, decision_memory, project_memory) ; temps de réponse ~300ms, pas de régression perf.
+
+**RUTH_DECISION_REQUIRED** : aucune.
+**PROCHAINE ACTION** : aucune — visible dans l'API, à intégrer dans l'UI G si Ruth veut le voir affiché (pas demandé pour l'instant).
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — câblé et testé.
+**DERNIÈRE REVUE CODEX** : question posée et répondue via le pont (2026-08-31) — voir `CORE/HANDOFFS/2026-08-31_CLAUDE_wiring-memoire-skills-question-codex.md`.
+
+---
+
+## BLOCK 07 — Skills / Routines / Executors (hermes_core)
+
+**OBJECTIF** : capacités internes réutilisables d'Hermès (brief du jour, routeur de projet, garde-fou de risque, etc.).
+
+**STATUT GLOBAL** : `TESTED`.
+
+**CE QUI EXISTE** : `hermes_core/skills/registry.py` (~10 skills réelles définies : daily_brief, live_brief, session_resume, decision_log, project_router, risk_guard, obsidian_curator, next_actions, session_closer, validation_gate), `routines/`, `executors/` — code réel, pas de stub. `get_core_snapshot()` les assemble toutes (tools/skills/routines/executors) en un seul appel. **Branché le 2026-08-31** dans `personal_cockpit.py`, exposé dans `hermes.capabilities.{skills,routines,executors}` de la réponse API. À distinguer des skills Claude Code (`~/.claude/skills/`), système différent et lui bien utilisé — même mot, deux systèmes.
+
+**CE QUI MANQUE** : rien côté branchement. Reste ouvert si Ruth veut : affichage dans l'UI G (pas demandé pour l'instant, visible uniquement via l'API pour le moment).
+
+**TESTS** : vérifié en direct — `hermes.capabilities` renvoie 10 skills, 1 routine, 11 executors réels, temps de réponse ~300ms, pas de régression sur le reste du payload.
+
+**RUTH_DECISION_REQUIRED** : aucune.
+**PROCHAINE ACTION** : aucune — brancher un affichage UI seulement si Ruth le demande.
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — câblé et testé.
+**DERNIÈRE REVUE CODEX** : question posée et répondue via le pont (2026-08-31) — "branchement délibérément laissé en attente de décision Ruth, pas un oubli, aucune raison de performance documentée."
+
+---
+
+## BLOCK 08 — Automatisations / Workflows (LaunchAgents)
+
+**OBJECTIF** : tâches Hermès qui tournent seules, sans que Ruth ait à les déclencher (brief du matin, triage mail, etc.).
+
+**STATUT GLOBAL** : `IN_PROGRESS` (partiellement cassé).
+
+**CE QUI EXISTE** : pas de moteur de workflow générique — les 16 fichiers `workflows/definitions/*.toml` sont des spécifications, jamais exécutées par du code (grep négatif). **Un seul workflow réellement câblé** : `hermes_prepare_my_day`, avec son propre script (`scripts/hermes_prepare_my_day.sh`) et un vrai LaunchAgent macOS actif (`com.ruth.jarvis.hermes.prepare-day.plist`, cron quotidien 8h, confirmé chargé). Deux autres LaunchAgents réels trouvés mais non explorés : `com.ruth.hermes.wake.plist` et `com.ruth.hermes.control.plist` (ouvre une vraie app macOS `Hermes Control.app`, créée le 8 mai, jamais mentionnée avant cet audit).
+
+**BUGS CONNUS** : `hermes_prepare_my_day` échoue depuis 4 jours (2026-08-28 → 08-31, `exit_code: 1` dans `runtime/hermes/automation_status.json`). **Root cause diagnostiquée le 2026-08-31** : `PermissionError: Operation not permitted` en écriture dans le vault Obsidian iCloud (`~/Library/Mobile Documents/iCloud~md~obsidian/...`) — confirmé que l'écriture fonctionne en interactif mais pas depuis le processus LaunchAgent en arrière-plan (`/usr/bin/python3` → résout vers le Python 3.9 embarqué dans Xcode). Permission système macOS (TCC/Accès complet au disque), pas un bug de code — nécessite une action de Ruth dans Réglages Système → Confidentialité et sécurité → Accès complet au disque. Ruth a choisi de continuer sur les autres décisions en attendant.
+
+**CE QUI MANQUE** : les 15 autres workflows définis (mail_triage, obsidian_sync, daily_review...) et les 8 scripts `wrappers/*.py` (calendar_guard, mail_guard, etc., code réel non-stub) n'ont aucun déclencheur — construits, jamais branchés.
+
+**RUTH_DECISION_REQUIRED** : aucune sur les 15 workflows — tranché.
+**DÉCISION RUTH (2026-08-31)** : les 15 workflows non branchés restent de côté, même logique que les intégrations gelées (Bloc 09) — pas un chantier maintenant.
+**PROCHAINE ACTION** : Ruth règle la permission Accès complet au disque quand elle a un moment (seule action requise pour ce bloc) ; `Hermes Control.app` et `com.ruth.hermes.wake.plist` restent à auditer séparément si utile plus tard, pas urgent.
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — voir cartographie globale.
+**DERNIÈRE REVUE CODEX** : non faite.
+
+---
+
+## BLOCK 09 — Intégrations externes (Google, Yahoo, NotebookLM, Graphify, Apple, n8n)
+
+**OBJECTIF** : connecter Hermès aux vrais outils de Ruth (calendrier, mail, Drive, etc.).
+
+**STATUT GLOBAL** : `BLOCKED` (gelé explicitement — décision Ruth 2026-08-31).
+
+**CE QUI EXISTE** : preuve d'activité réelle passée et non simulée — dossiers Google Drive créés avec de vrais IDs après validation de Ruth, mails Yahoo réellement déplacés avec vérification, test Graphify passé (rendu HTML confirmé), permissions Apple accordées.
+
+**CE QUI MANQUE** : toute activité récente. Tous les `status.json` datent du 23 avril au 13 mai — 3 à 4 mois d'arrêt. `n8n` et `openrouter` n'ont même pas de `status.json` — jamais activées.
+
+**RUTH_DECISION_REQUIRED** : aucune — tranché.
+**DÉCISION RUTH (2026-08-31)** : gel explicite et assumé, pas un oubli. Focus reste sur sécurité Pedro + voix G. Pas de travail lancé ici tant que Ruth ne redemande pas.
+**PROCHAINE ACTION** : aucune, en attente d'une future demande de Ruth.
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — voir cartographie globale.
+**DERNIÈRE REVUE CODEX** : non faite.
+
+---
+
+## BLOCK 10 — Journalisation / Validation (cycle de vie des délégations)
+
+**OBJECTIF** : tracer chaque délégation réelle avec preuve, jamais se fier à la seule parole d'un agent.
+
+**STATUT GLOBAL** : `TESTED`.
+
+**CE QUI EXISTE** : `hermes_core/validation/engine.py` — cycle de vie complet et réel : `prepared → awaiting_validation → approved → executed → result_logged`, avec branches `blocked`/`cancelled`/`rejected`, chaque transition journalisée avec horodatage. Prouvé en conditions réelles à deux reprises (Pedro, bloc Sécurité). `journal/hermes_events.jsonl` actif aujourd'hui.
+
+**CE QUI MANQUE** : `validation/queue.json` (store top-level, distinct du module Python) dormant depuis le 1er mai — à vérifier si c'est normal (peu de délégations réelles avant cette semaine) ou un signe de désynchronisation.
+
+**CRITÈRES DE FIN** : satisfait pour les délégations mission→exécution. Non applicable au chat quotidien (pas encore branché, voir Bloc 05).
+
+**RUTH_DECISION_REQUIRED** : aucune.
+**PROCHAINE ACTION** : vérifier `validation/queue.json` une fois plusieurs délégations réelles supplémentaires passées.
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — voir cartographie globale.
+**DERNIÈRE REVUE CODEX** : non faite.
+
+---
+
+## BLOCK 11 — `OpenJarvis-clean` (référence morte)
+
+**OBJECTIF** : n/a — bloc de suivi pour une décision de nettoyage, pas une fonctionnalité.
+
+**STATUT GLOBAL** : `DONE`.
+
+**CE QUI EXISTE** : `~/Jarvis/OpenJarvis-clean`, clone quasi intact du framework open source Stanford (Apache 2.0), 620 commits, dernier commit le 2026-04-29 — 4 mois d'inactivité. Une seule référence dans tout le système : un commentaire non résolu dans `scripts/jarvis_voice_v4.py` ("décider si on migre la v4 vers openjarvis-clean"), jamais tranché.
+
+**CE QUI MANQUE** : aucune capacité identifiée qui n'existe pas déjà dans `~/Jarvis/OpenJarvis` (la version active).
+
+**DÉCISION RUTH (2026-08-31)** : "attaque" — archivé, pas supprimé (réversible). Déplacé vers `~/Jarvis/_ARCHIVE/OpenJarvis-clean_archived-2026-08-31/`, git history intact, changements locaux non commités préservés (README.md, DashboardPage.tsx modifiés + 2 fichiers non trackés — rien perdu).
+**PROCHAINE ACTION** : décision Ruth, sinon laisser tel quel sans y toucher.
+
+**DERNIÈRE REVUE CLAUDE** : 2026-08-31 — voir cartographie globale.
+**DERNIÈRE REVUE CODEX** : non faite.

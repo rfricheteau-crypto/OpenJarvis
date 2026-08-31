@@ -209,6 +209,35 @@ def _hermes_core_request_validation_api():
     return request_validation_via_core
 
 
+def _hermes_core_snapshot_api():
+    if str(PERSONAL_ROOT) not in os.sys.path:
+        os.sys.path.insert(0, str(PERSONAL_ROOT))
+    from hermes_core import get_core_snapshot, refresh_memory_context
+
+    return get_core_snapshot, refresh_memory_context
+
+
+def _hermes_core_capabilities_snapshot() -> dict[str, Any]:
+    # Best-effort, à la demande seulement (appelé depuis _hermes_runtime_snapshot,
+    # jamais en polling continu) — skills/routines/executors et mémoire assemblée
+    # existent dans hermes_core depuis longtemps mais n'étaient jamais surfacés au
+    # serveur live (trouvé lors de la cartographie du 2026-08-31, confirmé par
+    # Codex : branchement laissé en attente de décision, pas un oubli technique
+    # documenté). Un échec ici ne doit jamais casser le reste du snapshot.
+    try:
+        get_core_snapshot, refresh_memory_context = _hermes_core_snapshot_api()
+        core = get_core_snapshot(PERSONAL_ROOT)
+        memory_payload, _path = refresh_memory_context(PERSONAL_ROOT)
+        return {
+            "skills": core.get("skills", []),
+            "routines": core.get("routines", []),
+            "executors": core.get("executors", []),
+            "memory": memory_payload,
+        }
+    except Exception:
+        return {}
+
+
 def _current_hermes_validation() -> dict[str, Any]:
     core = _load_json(HERMES_CORE_STATE_PATH) or {}
     validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
@@ -1292,6 +1321,7 @@ def _hermes_runtime_snapshot() -> dict[str, dict[str, Any]]:
         "risk_guard": _load_json(HERMES_RISK_GUARD_PATH) or {},
         "session_closer": _load_json(HERMES_SESSION_CLOSER_PATH) or {},
         "project_route": _load_json(HERMES_PROJECT_ROUTE_PATH) or {},
+        "capabilities": _hermes_core_capabilities_snapshot(),
     }
 
 
@@ -1928,7 +1958,14 @@ def _recent_alerts(
     risk_guard = hermes.get("risk_guard", {}) or {}
     if risk_guard:
         risk_level = str(risk_guard.get("overall_risk_level", "unknown"))
-        if risk_level in {"critical", "high"}:
+        generated_at_raw = str(risk_guard.get("generated_at") or "")
+        generated_dt = _parse_iso(generated_at_raw)
+        age_hours = (
+            (datetime.now(generated_dt.tzinfo) - generated_dt).total_seconds() / 3600
+            if generated_dt else None
+        )
+        is_stale = age_hours is not None and age_hours > 24
+        if risk_level in {"critical", "high"} and not is_stale:
             alerts.append(
                 {
                     "level": "warning",
@@ -2396,6 +2433,7 @@ def _personal_cockpit_payload() -> dict[str, Any]:
             "chat_runtime": hermes_chat_runtime,
             "status_summary": hermes_status_summary,
             "priority_summary": priorities,
+            "capabilities": hermes.get("capabilities", {}) or {},
         },
         "file_health": {
             label: {
