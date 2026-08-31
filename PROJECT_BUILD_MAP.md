@@ -291,9 +291,10 @@ même pas atteignable pour eux, faute de blocs listés).
 
 **OBJECTIF** : permettre à Ruth de parler à Hermès depuis les écrans OpenJarvis (ancien écran + Home G).
 
-**STATUT GLOBAL** : `IN_PROGRESS`.
+**STATUT GLOBAL** : `READY_FOR_TEST` — branchement WebRTC continu fait et
+testé en headless (2026-08-31), seul le test micro humain manque encore.
 
-**CE QUI EXISTE** : backend voix (Kokoro TTS, STT faster-whisper) opérationnel ; ancien écran `JarvisPersonalPage.tsx` avec micro manuel complet ; hook `useHermesSpeaker` extrait et réutilisable (2026-08-30) ; micro manuel ajouté dans Home G, testé Playwright réel (44px, cycle idle→recording→idle propre, aucune régression texte). POC Pipecat V2 (WebRTC, barge-in) démarre, raccordement corrigé et compile.
+**CE QUI EXISTE** : backend voix (Kokoro TTS, STT faster-whisper) opérationnel ; ancien écran `JarvisPersonalPage.tsx` avec micro manuel complet (inchangé, `?classic=1`) ; G raccordé au runtime WebRTC/Pipecat V2 continu (voir plus bas, 2026-08-31) — session persistante, barge-in piloté serveur, plus de dictée par tour.
 
 **CE QUI MANQUE** : G emploie aujourd'hui une dictée `MediaRecorder` arrêtée
 manuellement, pas le runtime conversationnel WebRTC/Pipecat : une session
@@ -316,14 +317,46 @@ Hermès pendant qu'il parle**, et **le micro doit être arrêté manuellement
 d'une dictée `MediaRecorder` (clic → parle → clic pour arrêter → transcrit),
 pas d'une session vocale continue avec détection de fin de parole.
 
-**RUTH_DECISION_REQUIRED** : aucune sur le diagnostic (confirmé). Reste
-ouvert : aucun contrat d'API concret (endpoints, format des messages) n'a
-encore été publié par Codex entre le POC `hermes-webrtc-poc-v2` et G — avant
-de commencer l'intégration côté frontend, il faut ce contrat écrit, sinon je
-devine une API qui peut ne pas correspondre au POC réel.
-**PROCHAINE ACTION** : Claude demande le contrat d'intégration à Codex
-(handoff), puis raccorde G dessus ; un second test micro réel Ruth valide
-l'interruption une fois fait.
+**BRANCHEMENT FAIT (Claude, 2026-08-31 ~23h05, commit `41d980b`)** : Codex a
+publié le contrat exact
+(`prototypes/hermes-webrtc-poc-v2/INTEGRATION_CONTRACT.md`). Nouveau hook
+`useHermesVoiceSession` (`frontend/src/hooks/`) : `getUserMedia` →
+`RTCPeerConnection` + data channel `hermes-events` → `POST /api/offer` avec
+un `session_id` stable (nouveau, partagé aussi avec le chat texte) →
+`client-ready` → messages `state`/`message`/`event` reçus en continu, audio
+distant via `pc.ontrack`. Pas de `POST /interrupt` (n'existe pas côté
+runtime) : le barge-in reste piloté par le flux micro continu + VAD
+server-side, G coupe seulement son rendu audio local sur
+`user_speaking`/`barge_in_start`. Bouton micro : un clic démarre la session
+complète, un clic la ferme — plus de clic par tour de parole. Ancienne
+dictée `MediaRecorder` (`useSpeech`/`useHermesSpeaker`) retirée de G
+uniquement, toujours utilisée par l'écran classique (`?classic=1`).
+
+**Bug trouvé et corrigé en testant** : le serveur POC V2 tournait depuis
+avant le correctif CORS de Codex (`allowed_origins` figé au démarrage du
+process) — `127.0.0.1:5173` bloqué en préflight malgré une config déjà
+correcte dans le code. Redémarré.
+
+**Testé réellement (Playwright, `--use-fake-device-for-media-stream`, pas
+un vrai micro)** : ouverture de session confirmée côté serveur POC
+(`active_sessions` 0→1), accueil Hermès reçu et affiché dans la bulle G via
+le data channel (pas via `/api/hermes/chat`, conforme au contrat), état
+`SPEAKING` reflété sur le bouton micro et son libellé, fermeture propre
+(`active_sessions` 1→0), 0 erreur console, mobile 390×844 sans régression,
+`tsc --noEmit` propre. **Limite trouvée et documentée, pas corrigée**
+(hors périmètre Claude — comportement du runtime Codex) : une fermeture
+brutale d'onglet laisse la session orpheline côté serveur au-delà de 8s ;
+le serveur l'auto-nettoie au prochain `/api/offer`
+(`_sessions.clear()` avant chaque nouvelle session) donc sans conséquence
+en usage normal (bouton unique, un seul utilisateur).
+
+**Non prouvé par ce test** (nécessite un vrai micro humain, comme convenu
+avec Codex dès le départ) : VAD réel sur vraie parole, TTS Kokoro à
+l'oreille, interruption réelle en reparlant.
+
+**RUTH_DECISION_REQUIRED** : aucune.
+**PROCHAINE ACTION** : test micro humain réel par Ruth — le seul critère de
+validation restant pour ce bloc (VAD, TTS, barge-in en conditions réelles).
 
 ---
 
