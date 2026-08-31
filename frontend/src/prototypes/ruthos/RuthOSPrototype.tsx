@@ -1233,7 +1233,7 @@ function ProjectDetail({
   project: ProjectData;
   snapshot: PersonalCockpitSnapshot | null;
   onBack: () => void;
-  onOpenHermes: () => void;
+  onOpenHermes: (message: string) => void;
   onOpenBlock: (num: string) => void;
 }) {
   const [advSnapshot, setAdvSnapshot] = useState<AdvSnapshot | null>(null);
@@ -1394,7 +1394,15 @@ function ProjectDetail({
             </div>
           )}
 
-          <button type="button" className="g-hermes-cta" onClick={onOpenHermes}>
+          <button
+            type="button"
+            className="g-hermes-cta"
+            onClick={() =>
+              onOpenHermes(
+                `Hermès, il faut regarder le projet ${project.name}. ${cleanText(project.tagline, '')}`.trim(),
+              )
+            }
+          >
             <Sparkles size={14} /> Demander à Hermès
           </button>
         </section>
@@ -1412,7 +1420,7 @@ function BlockDetail({
   project: ProjectData;
   blockNum: string;
   onBack: () => void;
-  onOpenHermes: () => void;
+  onOpenHermes: (message: string) => void;
 }) {
   const [block, setBlock] = useState<ProjectBlock | null | undefined>(undefined);
 
@@ -1516,7 +1524,22 @@ function BlockDetail({
             </div>
           ) : null}
 
-          <button type="button" className="g-hermes-cta" onClick={onOpenHermes}>
+          <button
+            type="button"
+            className="g-hermes-cta"
+            onClick={() => {
+              const objectif = cleanText(block.objectif, '');
+              const nextAction = cleanText(block.next_action, '');
+              const message = [
+                `Hermès, il faut travailler le projet ${project.name}, bloc ${block.num} — ${block.name}.`,
+                objectif ? `Objectif : ${objectif}.` : '',
+                nextAction ? `Prochaine action : ${nextAction}.` : '',
+              ]
+                .filter(Boolean)
+                .join(' ');
+              onOpenHermes(message);
+            }}
+          >
             <Sparkles size={14} /> Travailler ce bloc avec Hermès
           </button>
         </section>
@@ -1620,6 +1643,19 @@ function VariantG({
     }
   }, [chatInput, sending, refreshProposedMission, speak]);
 
+  // "Travailler ce bloc avec Hermès" / "Demander à Hermès" — envoie le vrai
+  // contexte du bloc/projet cliqué au même chat déjà câblé (handleSend), puis
+  // revient à l'accueil où la carte "Mission proposée" apparaît. Avant ce
+  // correctif (2026-08-31), ces boutons étaient câblés sur `onCloseDetail`
+  // seul : ils fermaient l'écran sans rien envoyer à Hermès.
+  const handleOpenHermesWithContext = useCallback(
+    (message: string) => {
+      void handleSend(message);
+      onCloseDetail();
+    },
+    [handleSend, onCloseDetail],
+  );
+
   const handleMicClick = useCallback(async () => {
     // Anti-écho : un clic micro ne laisse jamais Hermès parler par-dessus Ruth.
     if (isSpeaking) stopSpeaking({ silent: true });
@@ -1722,7 +1758,7 @@ function VariantG({
         project={PROJECTS[projectId]}
         blockNum={blockNum}
         onBack={onBackToBlocks}
-        onOpenHermes={onCloseDetail}
+        onOpenHermes={handleOpenHermesWithContext}
       />
     );
   }
@@ -1732,7 +1768,7 @@ function VariantG({
         project={PROJECTS[projectId]}
         snapshot={snapshot}
         onBack={onBackToProjects}
-        onOpenHermes={onCloseDetail}
+        onOpenHermes={handleOpenHermesWithContext}
         onOpenBlock={onOpenBlock}
       />
     );
