@@ -291,8 +291,9 @@ même pas atteignable pour eux, faute de blocs listés).
 
 **OBJECTIF** : permettre à Ruth de parler à Hermès depuis les écrans OpenJarvis (ancien écran + Home G).
 
-**STATUT GLOBAL** : `READY_FOR_TEST` — branchement WebRTC continu fait et
-testé en headless (2026-08-31), seul le test micro humain manque encore.
+**STATUT GLOBAL** : `TESTED` — branchement WebRTC continu, testé en headless
+puis validé au micro humain réel par Ruth (2026-09-01) : connexion,
+interruption et reprise après coupure toutes confirmées.
 
 **CE QUI EXISTE** : backend voix (Kokoro TTS, STT faster-whisper) opérationnel ; ancien écran `JarvisPersonalPage.tsx` avec micro manuel complet (inchangé, `?classic=1`) ; G raccordé au runtime WebRTC/Pipecat V2 continu (voir plus bas, 2026-08-31) — session persistante, barge-in piloté serveur, plus de dictée par tour.
 
@@ -369,10 +370,34 @@ Honnête : "lent" peut aussi venir de la latence du pipeline STT→LLM→TTS
 lui-même (terrain Codex) — ce correctif règle précisément "devient muet
 après une interruption", pas nécessairement toute lenteur perçue.
 
+**TEST HUMAIN RÉEL #3 (Ruth, 2026-09-01) — VALIDÉ** : "ça marche il s'arrête" ;
+après interruption "il devient muet pas longtemps mais il reparle vite"
+(comportement attendu : pause le temps qu'il réfléchisse, puis reprise —
+plus jamais de mutisme permanent). Les 3 critères qui bloquaient
+initialement sont confirmés en usage réel : connexion de base, interruption
+réelle en reparlant, reprise après coupure.
+
+**Piste "toujours mou" trouvée avant ce test réussi, non un bug** : Ruth
+utilisait les haut-parleurs de l'ordinateur, pas un casque. Reproduit en
+injectant un vrai fichier audio dans un faux micro (Playwright,
+`--use-file-for-fake-audio-capture`) : boucle réelle
+`Ruth parle → Transcription (8+s) → Hermès réfléchit → Ruth parle → ...`
+sans jamais atteindre `SPEAKING` — cohérent avec le micro captant la propre
+voix d'Hermès sortie des haut-parleurs et la VAD la reprenant pour une
+nouvelle interruption, malgré `echoCancellation:true` côté navigateur et la
+détection d'écho déjà présente côté runtime (`_detect_barge_in_echo`).
+**Confirmé par le test : au casque, plus de boucle.** Contrainte matérielle
+connue de ce type de système (mêmes recommandations chez Zoom/Teams), pas
+un défaut de code à corriger dans l'immédiat — noté pour Codex si un
+renforcement de la détection d'écho est voulu plus tard pour l'usage
+haut-parleurs.
+
+**STATUT GLOBAL** → `TESTED`.
+
 **RUTH_DECISION_REQUIRED** : aucune.
-**PROCHAINE ACTION** : Ruth revérifie au micro réel avec ce correctif ; si
-la lenteur persiste sans lien avec le mutisme, orienter vers Codex
-(latence pipeline, terrain runtime).
+**PROCHAINE ACTION** : aucune bloquante. Reste ouvert si Ruth le souhaite :
+un indice visuel dans G recommandant un casque pour la voix (UX mineure,
+pas demandée pour l'instant).
 
 ---
 
