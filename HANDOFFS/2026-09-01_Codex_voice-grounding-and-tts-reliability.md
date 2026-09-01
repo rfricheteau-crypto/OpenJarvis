@@ -250,3 +250,25 @@
 - La tuile « En attente » dit maintenant « décisions à consulter », distincte
   du bouton d'approbation technique sans validation active.
 - Tests serveur 11/11 et build frontend OK.
+## Bloc 02 — Projets issus du seul Project State publié (2026-09-01)
+
+### Cause
+
+La liste Niveau 2 utilisait `PROJECTS` (registre statique). Elle pouvait donc
+montrer des projets non publiés et créer une fausse impression d'état réel.
+
+### Correctif
+
+`RuthOSPrototype` charge désormais `/v1/personal-cockpit/project-state` et
+construit cette liste exclusivement à partir de ses `projects`. Le registre
+local sert encore aux pages de détail après clic, pas à la liste elle-même.
+
+### Preuve
+
+- `npm run build` frontend : réussi.
+- Appel HTTP réel : le serveur publie actuellement uniquement `Pedro OS`.
+
+### À tester humainement
+
+Dans G, ouvrir **Projets** : Pedro OS doit être le seul élément. Son détail
+doit encore s'ouvrir ; aucun projet non publié ne doit être visible.
