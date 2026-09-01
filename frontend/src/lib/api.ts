@@ -481,6 +481,38 @@ export async function fetchProjectBlocks(projectId: string): Promise<ProjectBloc
   return res.json();
 }
 
+// Project State — snapshots publiés explicitement par un projet (distinct de
+// project-blocks/PROJECT_BUILD_MAP.md, qui suit la construction bloc par
+// bloc). Un projet peut n'avoir aucun snapshot publié — c'est honnête, pas un
+// bug (CODEX_RUTH_OS/CORE/project-state/README.md, "étape 1 : Pedro OS
+// pilote le format").
+export interface ProjectStateEntry {
+  schema_version: string;
+  project: { id: string; name: string };
+  freshness: { status: string | null; observed_at: string | null; stale_after_days: number | null };
+  state: {
+    lifecycle: string | null;
+    summary: string | null;
+    active_block: string | null;
+    next_action: string | null;
+    decisions_required: unknown[];
+    blockers: unknown[];
+    risks: Array<{ id?: string; label?: string; severity?: string; status?: string; source?: string }>;
+  };
+}
+
+export interface ProjectStateResponse {
+  projects: ProjectStateEntry[];
+  warnings: string[];
+  source: string;
+}
+
+export async function fetchProjectState(): Promise<ProjectStateResponse> {
+  const res = await fetch(`${getBase()}/v1/personal-cockpit/project-state`);
+  if (!res.ok) throw new Error(`Failed to fetch project state: ${res.status}`);
+  return res.json();
+}
+
 export interface HermesTraceEntry {
   event_type: string;
   status: string;

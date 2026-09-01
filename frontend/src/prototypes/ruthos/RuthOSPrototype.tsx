@@ -35,6 +35,7 @@ import {
   fetchAdvSnapshot,
   fetchAgentsStatus,
   fetchProjectBlocks,
+  fetchProjectState,
   fetchProposedMission,
   fetchSessionLog,
   prepareExecution,
@@ -45,6 +46,7 @@ import {
   type LastExecutionInfo,
   type MissionHistoryEntry,
   type ProjectBlock,
+  type ProjectStateEntry,
 } from '../../lib/api';
 import { useAppStore } from '../../lib/store';
 import { useHermesVoiceSession, type HermesVoiceMessage } from '../../hooks/useHermesVoiceSession';
@@ -102,6 +104,13 @@ function currentProjectId(): string | null {
 function currentBlockNum(): string | null {
   return new URLSearchParams(window.location.search).get('block');
 }
+
+// L'id du registre d'affichage de G ne correspond pas toujours à l'id du
+// snapshot Project State publié (namespaces distincts, pas un bug — voir
+// CODEX_RUTH_OS/CORE/project-state/README.md).
+const PROJECT_STATE_ID_ALIASES: Record<string, string> = {
+  pedro: 'pedro-os',
+};
 
 function cleanText(value: string | undefined | null, fallback: string): string {
   const text = value?.trim();
@@ -1240,6 +1249,7 @@ function ProjectDetail({
   const [advSnapshot, setAdvSnapshot] = useState<AdvSnapshot | null>(null);
   const [blocks, setBlocks] = useState<ProjectBlock[] | null>(null);
   const [blocksTracked, setBlocksTracked] = useState(true);
+  const [projectState, setProjectState] = useState<ProjectStateEntry | null>(null);
 
   useEffect(() => {
     if (project.id !== 'adv') return;
@@ -1247,6 +1257,23 @@ function ProjectDetail({
     fetchAdvSnapshot()
       .then((data) => { if (!cancelled) setAdvSnapshot(data); })
       .catch(() => {});
+    return () => { cancelled = true; };
+  }, [project.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProjectState(null);
+    fetchProjectState()
+      .then((data) => {
+        if (cancelled) return;
+        // L'id du registre d'affichage (ex. "pedro") ne correspond pas
+        // toujours à l'id du snapshot Project State (ex. "pedro-os") — les
+        // deux systèmes ont des namespaces distincts, pas un bug.
+        const alias = PROJECT_STATE_ID_ALIASES[project.id] ?? project.id;
+        const match = data.projects.find((p) => p.project.id === project.id || p.project.id === alias);
+        setProjectState(match ?? null);
+      })
+      .catch(() => { if (!cancelled) setProjectState(null); });
     return () => { cancelled = true; };
   }, [project.id]);
 
@@ -1308,6 +1335,27 @@ function ProjectDetail({
             <h1 id="project-detail-title">{project.name}</h1>
             <p>{project.tagline}</p>
           </div>
+
+          {projectState ? (
+            <div className="g-project-state-card">
+              <span className="g-mission-eyebrow">
+                État publié · {projectState.freshness.observed_at ? new Date(projectState.freshness.observed_at).toLocaleDateString('fr-FR') : 'date inconnue'}
+                {projectState.freshness.status && projectState.freshness.status !== 'current' ? ` · ${projectState.freshness.status}` : ''}
+              </span>
+              {projectState.state.summary ? <p className="g-mission-summary">{projectState.state.summary}</p> : null}
+              {projectState.state.active_block ? (
+                <p className="g-mission-context">En cours : <strong>{projectState.state.active_block}</strong></p>
+              ) : null}
+              {projectState.state.next_action ? (
+                <p className="g-mission-context">Prochaine action : <strong>{projectState.state.next_action}</strong></p>
+              ) : null}
+              {projectState.state.risks.length > 0 ? (
+                <p className="g-mission-context g-project-state-risk">
+                  {projectState.state.risks.length} risque{projectState.state.risks.length > 1 ? 's' : ''} ouvert{projectState.state.risks.length > 1 ? 's' : ''} : {projectState.state.risks.map((r) => r.label).filter(Boolean).join(' · ')}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div>
             <div className="g-detail-subheading">Construction A→Z</div>
@@ -2442,6 +2490,8 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-session-modal-head h2{margin:0;font-size:15px;color:var(--d-text)}
 .g-session-log-text{margin:0;padding:16px 18px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,monospace;font-size:11.5px;line-height:1.6;color:var(--d-text)}
 .g-mission-card{margin-top:14px;padding:14px 16px;border-radius:14px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);text-align:left}
+.g-project-state-card{margin-top:16px;padding:14px 16px;border-radius:14px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.22);text-align:left}
+.g-project-state-risk{color:#fbbf24}
 .g-mission-eyebrow{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c4b5fd;margin-bottom:6px}
 .g-mission-summary{margin:0 0 6px;font-size:13.5px;color:var(--d-text)}
 .g-mission-context,.g-mission-agent{margin:0 0 4px;font-size:12px;color:var(--d-muted)}
