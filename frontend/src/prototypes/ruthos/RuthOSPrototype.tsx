@@ -67,7 +67,7 @@ type ViewModel = {
   nextAction: string;
   nextActionDetail: string;
   decisions: Array<{ project: string; title: string; detail: string }>;
-  projects: Array<{ id: string; title: string; summary: string }>;
+  projects: Array<{ id: string; title: string; summary: string; freshness?: string; lifecycle?: string }>;
   risks: Array<{ title: string; detail: string; level: string }>;
   hermesSummary: string;
   healthyServices: number;
@@ -117,6 +117,17 @@ function cleanText(value: string | undefined | null, fallback: string): string {
   return text || fallback;
 }
 
+const FRESHNESS_LABELS_FR: Record<string, string> = {
+  current: 'à jour',
+  stale: 'à vérifier',
+  unknown: 'non vérifié',
+};
+const LIFECYCLE_LABELS_FR: Record<string, string> = {
+  active: 'Actif',
+  paused: 'En pause',
+  dormant: 'Dormant',
+};
+
 // Les champs de bloc viennent tels quels de PROJECT_BUILD_MAP.md (markdown
 // écrit par des humains/agents) — `` `code` `` et `**gras**` doivent être
 // stylés, pas affichés en texte brut avec les astérisques/backticks visibles.
@@ -136,18 +147,36 @@ function renderInlineMarkdown(text: string): ReactNode {
   return parts;
 }
 
-function buildViewModel(snapshot: PersonalCockpitSnapshot | null): ViewModel {
+function buildViewModel(
+  snapshot: PersonalCockpitSnapshot | null,
+  publishedProjectStates: ProjectStateEntry[],
+): ViewModel {
   const decisions = (snapshot?.pending_validations ?? []).slice(0, 3).map((item) => ({
     project: cleanText(item.project, 'RuthOS'),
     title: cleanText(item.title, 'Décision à examiner'),
     detail: cleanText(item.why_pending || item.expected_action, 'Validation de Ruth attendue.'),
   }));
 
-  const projects = Object.values(PROJECTS).map((project) => ({
-    id: project.id,
-    title: project.name,
-    summary: project.tagline,
-  }));
+  // Ruth (2026-09-01) : "LES VRAIS ETATS" — les 10 projets ont désormais un
+  // Project State publié réel (Codex), donc la liste "Projets" reflète cet
+  // état plutôt que la tagline statique. Avant cette publication à 10, un
+  // seul snapshot existait et Ruth avait explicitement refusé ce même
+  // changement (perte d'info pour 9 projets sur 10) — revenu ici seulement
+  // une fois ce problème réellement résolu, pas deviné.
+  const statesByProjectId = new Map(
+    publishedProjectStates.map((projectState) => [projectState.project.id, projectState]),
+  );
+  const projects = Object.values(PROJECTS).map((project) => {
+    const alias = PROJECT_STATE_ID_ALIASES[project.id] ?? project.id;
+    const projectState = statesByProjectId.get(alias) ?? statesByProjectId.get(project.id);
+    return {
+      id: project.id,
+      title: project.name,
+      summary: projectState ? cleanText(projectState.state.summary, project.tagline) : project.tagline,
+      freshness: projectState?.freshness.status ?? undefined,
+      lifecycle: projectState?.state.lifecycle ?? undefined,
+    };
+  });
 
   return {
     nextAction: cleanText(
@@ -1210,6 +1239,13 @@ function ProjetsDetail({
                       )}
                     </div>
                     <p>{cleanText(project.summary, 'État à actualiser.')}</p>
+                    {project.lifecycle || project.freshness ? (
+                      <span className="g-project-freshness">
+                        {project.lifecycle ? LIFECYCLE_LABELS_FR[project.lifecycle] ?? project.lifecycle : null}
+                        {project.lifecycle && project.freshness ? ' · ' : null}
+                        {project.freshness ? FRESHNESS_LABELS_FR[project.freshness] ?? project.freshness : null}
+                      </span>
+                    ) : null}
                     {decision ? (
                       <div className="g-pending-action">
                         <span>Prochaine étape</span>
@@ -2201,8 +2237,25 @@ export function RuthOSPrototype({ snapshot, onRefresh, connectionError, lastUpda
   const [projectId, setProjectId] = useState<string | null>(currentProjectId);
   const [blockNum, setBlockNum] = useState<string | null>(currentBlockNum);
   const [sidebarInitiallyOpen] = useState(() => useAppStore.getState().sidebarOpen);
-  const model = useMemo(() => buildViewModel(snapshot), [snapshot]);
+  const [publishedProjectStates, setPublishedProjectStates] = useState<ProjectStateEntry[]>([]);
+  const model = useMemo(
+    () => buildViewModel(snapshot, publishedProjectStates),
+    [snapshot, publishedProjectStates],
+  );
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchProjectState()
+      .then((data) => {
+        if (!cancelled) setPublishedProjectStates(data.projects);
+      })
+      .catch(() => {
+        // Best-effort — la liste "Projets" retombe alors sur les taglines
+        // statiques (buildViewModel), jamais sur une donnée inventée.
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const compactViewport = window.matchMedia('(max-width: 767px)').matches;
@@ -2584,6 +2637,7 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-detail{max-width:880px;margin:0 auto;padding:18px 0 56px}.g-detail-heading{padding:22px 0 26px}.g-detail-heading>span,.g-pending-action>span{display:block;color:#aeb9e8;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}.g-detail-heading h1{font-size:clamp(30px,4vw,46px);line-height:1.05;margin:8px 0 10px}.g-detail-heading p{margin:0;color:var(--d-muted);font-size:14px;line-height:1.5;max-width:580px}.g-pending-list{display:grid;gap:12px}.g-pending-item{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:18px}.g-pending-item-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.g-pending-project{display:block;color:#aeb9e8;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px}.g-pending-item h2{font-size:17px;line-height:1.25;margin:0}.g-pending-item>p{margin:13px 0;color:var(--d-muted);font-size:13px;line-height:1.5}.g-pending-action{border-top:1px solid var(--d-card-border);padding-top:12px}.g-pending-action strong{display:block;margin-top:5px;font-size:13px;line-height:1.4}.g-empty-state{display:flex;gap:12px;align-items:flex-start;background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:20px;color:#86efac}.g-empty-state strong{display:block;color:var(--d-text);margin-bottom:4px}.g-empty-state p{margin:0;color:var(--d-muted);font-size:13px}
 .g-system-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.g-system-card{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:16px;padding:16px}.g-system-card-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;color:var(--d-text)}.g-system-card-head strong{font-size:14px}.g-system-ok{color:#86efac;font-size:13px;margin:0 0 6px}.g-system-down{color:#fca5a5;font-size:13px;margin:0 0 6px}.g-system-warn{color:#fbbf24;font-size:13px;margin:0 0 6px}.g-system-note{color:var(--d-muted);font-size:12px;margin:0;line-height:1.5}
 .g-pending-item-clickable{width:100%;text-align:left;cursor:pointer;font:inherit;transition:transform .16s ease,border-color .16s ease}.g-pending-item-clickable:hover{transform:translateY(-2px);border-color:#5965a6}.g-pending-item-clickable:focus-visible{outline:2px solid var(--d-blue);outline-offset:3px}.g-pending-item-more{display:inline-flex;align-items:center;gap:4px;margin-top:10px;font-size:12px;color:#aeb9e8}
+.g-project-freshness{display:block;margin-top:6px;font-size:11px;letter-spacing:.02em;color:var(--d-muted)}
 .g-detail-subheading{margin:26px 0 12px;font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#aeb9e8}
 .g-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}.g-stat{background:var(--d-card);border:1px solid var(--d-card-border);border-radius:14px;padding:14px}.g-stat span{display:block;font-size:11px;color:var(--d-muted);text-transform:uppercase;letter-spacing:.06em}.g-stat strong{display:block;margin-top:4px;font-size:19px;color:var(--d-text)}.g-stat em{display:block;margin-top:2px;font-size:11px;font-style:normal;color:var(--d-muted)}
 .g-decision-list{display:grid;gap:10px}.g-decision-item{display:flex;gap:12px;align-items:baseline}.g-decision-item span{flex-shrink:0;font-size:11px;color:var(--d-muted);font-variant-numeric:tabular-nums}.g-decision-item strong{font-weight:500;font-size:13.5px;color:var(--d-text)}
