@@ -240,3 +240,13 @@
 - Recharger G : la carte « Mission proposée » du Bloc 08 doit disparaître.
   Le compte rendu Codex doit rester, avec l'avertissement sur la fausse
   validation DON.
+
+## Audit dashboard — 2026-09-01
+
+- Serveur rapide : snapshot cockpit mesuré à ~20 ms ; la lenteur perçue ne
+  vient pas de cette route.
+- Un brief Hermès de mai 2026 était présenté comme priorité immédiate. Il est
+  désormais traité comme périmé après 24 h ; G demande une priorité fraîche.
+- La tuile « En attente » dit maintenant « décisions à consulter », distincte
+  du bouton d'approbation technique sans validation active.
+- Tests serveur 11/11 et build frontend OK.

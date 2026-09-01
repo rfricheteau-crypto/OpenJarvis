@@ -372,6 +372,12 @@ _UNVERIFIED_RUTH_DECISION_CLAIM_RE = re.compile(
     r"\b(?:validé|validée|approuvé|approuvée|décidé|décidée)\s+(?:par|avec)\s+Ruth\b",
     re.IGNORECASE,
 )
+_HERMES_NEXT_ACTIONS_MAX_AGE_SECONDS = 24 * 60 * 60
+_HERMES_STATUS_QUESTION_RE = re.compile(
+    r"^\s*(?:hermès\s*,?\s*)?(?:quelle\s+est\s+ma\s+priorité|où\s+en\s+est|qu['’]est-ce\s+qu['’]il\s+reste|"
+    r"qu['’]est-ce\s+que\s+je\s+peux\s+faire)\b",
+    re.IGNORECASE,
+)
 
 
 def _should_prepare_hermes_mission(message: str) -> bool:
@@ -384,7 +390,11 @@ def _should_prepare_hermes_mission(message: str) -> bool:
     """
     normalized = " ".join(message.split())
     meaningful = re.sub(r"[^\wÀ-ÿ]", "", normalized, flags=re.UNICODE)
-    return len(meaningful) >= 8 and bool(_HERMES_TASK_INTENT_RE.search(normalized))
+    return (
+        len(meaningful) >= 8
+        and not _HERMES_STATUS_QUESTION_RE.search(normalized)
+        and bool(_HERMES_TASK_INTENT_RE.search(normalized))
+    )
 
 
 async def _observe_hermes_chat_request(message: str) -> None:
@@ -871,6 +881,25 @@ def _project_block_status_reply(message: str) -> str | None:
     else:
         parts.append("La source ne publie pas encore de prochain bloc ; je ne vais pas le deviner.")
     return " ".join(parts)
+
+
+def _current_priority_reply(message: str) -> str | None:
+    """Answer a priority/status question from fresh Hermès state only."""
+    if not _HERMES_STATUS_QUESTION_RE.search(message):
+        return None
+    next_actions = _load_json(HERMES_NEXT_ACTIONS_PATH) or {}
+    generated_at = str(next_actions.get("generated_at") or next_actions.get("updated_at") or "")
+    age = _relative_seconds(generated_at)
+    actions = next_actions.get("actions") if isinstance(next_actions.get("actions"), list) else []
+    if actions and (age is None or age <= _HERMES_NEXT_ACTIONS_MAX_AGE_SECONDS):
+        lead = actions[0] if isinstance(actions[0], dict) else {}
+        label = str(lead.get("label") or "").strip()
+        if label:
+            return f"Ta priorité actuelle publiée est : {label}."
+    return (
+        "Je n'ai pas de priorité RuthOS fraîche et vérifiée à te donner : le dernier brief est périmé. "
+        "La prochaine étape sûre est de cadrer avec toi un bloc concret, puis seulement de préparer une mission."
+    )
 
 
 def _hermes_messages(message: str, history: list[HermesChatTurn]) -> list[dict[str, str]]:
@@ -1805,14 +1834,24 @@ def _priority_lane(
             "target_id": "pending-validation",
         }
 
-    next_actions = (hermes.get("next_actions", {}) or {}).get("actions", []) or []
-    if next_actions:
+    next_actions_document = hermes.get("next_actions", {}) or {}
+    next_actions = next_actions_document.get("actions", []) or []
+    next_actions_age = _relative_seconds(str(next_actions_document.get("generated_at") or next_actions_document.get("updated_at") or ""))
+    if next_actions and (next_actions_age is None or next_actions_age <= _HERMES_NEXT_ACTIONS_MAX_AGE_SECONDS):
         lead = next_actions[0] or {}
         return {
             "headline": str(lead.get("label", "Prochaine action Hermes")),
             "detail": str(lead.get("why", "Synthèse de la prochaine action utile.")),
             "source": "hermes_next_actions",
             "severity": "ok",
+            "target_id": "hermes-core",
+        }
+    if next_actions:
+        return {
+            "headline": "Aucune priorité fraîche à afficher",
+            "detail": "Le brief Hermès affiché est périmé ; demande à Hermès une nouvelle priorité plutôt que de suivre cette ancienne suggestion.",
+            "source": "hermes_next_actions_stale",
+            "severity": "info",
             "target_id": "hermes-core",
         }
 
@@ -3218,6 +3257,11 @@ async def get_proposed_mission():
         and last_execution.get("execution_status") in {"executed", "result_logged"}
     ):
         return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
+    # A status question is conversation, never work to delegate. Older runtime
+    # files can contain one from before this distinction existed; hide it rather
+    # than offering Ruth a meaningless “Préparer avec Hermès” action.
+    if mission and _HERMES_STATUS_QUESTION_RE.search(str(mission.get("request_summary") or "")):
+        return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
     if not mission or not CURRENT_MISSION_PATH.exists():
         return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
     generated_at = datetime.fromtimestamp(CURRENT_MISSION_PATH.stat().st_mtime).isoformat(timespec="seconds")
@@ -3724,6 +3768,24 @@ async def hermes_chat(request_body: HermesChatRequest, request: Request):
     config = _hermes_chat_config()
     runtime = _hermes_chat_runtime_summary()
     engine_mode = request_body.engine_mode
+    grounded_priority_reply = _current_priority_reply(request_body.message)
+    if grounded_priority_reply:
+        return {
+            "reply": grounded_priority_reply,
+            "engine": "grounded",
+            "provider": "hermes-state",
+            "mode": engine_mode,
+            "model": "none",
+            "selection_reason": "État Hermès frais ou absence de priorité : réponse factuelle sans appel au modèle.",
+            "used_memory": True,
+            "source": "hermes_priority_state",
+            "warning": "",
+            "fallback_used": False,
+            "budget": runtime["budget"],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "estimated_cost_usd": 0.0,
+            "local_limited": False,
+        }
     grounded_project_reply = _project_block_status_reply(request_body.message)
     if grounded_project_reply:
         return {

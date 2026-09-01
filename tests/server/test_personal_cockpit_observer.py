@@ -29,6 +29,7 @@ def test_only_explicit_work_requests_become_hermes_missions():
 
     assert not cockpit._should_prepare_hermes_mission("Bonjour Hermès")
     assert not cockpit._should_prepare_hermes_mission("Quel est le prochain bloc Pedro ?")
+    assert not cockpit._should_prepare_hermes_mission("Hermès, quelle est ma priorité réelle aujourd’hui pour terminer RuthOS ?")
     assert not cockpit._should_prepare_hermes_mission("................")
     assert not cockpit._should_prepare_hermes_mission("C'est un bloc, Pedro.")
 

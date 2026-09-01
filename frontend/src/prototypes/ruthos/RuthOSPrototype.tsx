@@ -799,7 +799,7 @@ function buildHomeTiles(model: ViewModel, snapshot: PersonalCockpitSnapshot | nu
       label: 'En attente',
       icon: <CheckCircle2 size={18} />,
       count: pendingCount,
-      teaser: pendingCount ? `${pendingCount} décision(s) à donner` : 'Rien à valider',
+      teaser: pendingCount ? `${pendingCount} décision(s) à consulter` : 'Rien à valider',
       status: pendingCount ? 'validation' : 'active',
       sourced: true,
     },
@@ -1786,13 +1786,15 @@ function VariantG({
       // "me montrer ce prompt avant envoi". Seule l'approbation efface tout.
       setPreviewPrompt(result.preview_prompt ?? null);
       setPreviewAgent(result.preview_agent ?? null);
-      await onRefresh?.();
+      // La préparation peut suivre une mission régénérée : relire aussi la
+      // carte locale, sinon G affiche le texte de la mission précédente.
+      await Promise.all([onRefresh?.(), refreshProposedMission()]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Impossible de préparer l'exécution");
     } finally {
       setPreparingExecution(false);
     }
-  }, [preparingExecution, onRefresh]);
+  }, [preparingExecution, onRefresh, refreshProposedMission]);
 
   // Codex (2026-09-01) : "Approuver et envoyer" répond désormais tout de
   // suite avec execution_status="running" au lieu d'attendre toute la durée
