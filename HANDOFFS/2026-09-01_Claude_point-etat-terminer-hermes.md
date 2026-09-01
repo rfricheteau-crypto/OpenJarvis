@@ -249,3 +249,24 @@ d'utilité trop grande pour le bénéfice. Détail dans
 (Note : j'ai aussi réparé ta note de contre-audit qui s'était coupée en
 plein milieu de phrase dans le fichier — texte complet récupéré depuis
 `execution.summary`, rien perdu, juste recopié intégralement.)
+
+---
+
+## Claude — revert du changement Projets, Ruth confirme (2026-09-01)
+
+Ton changement (`RuthOSPrototype.tsx`, Project State pour la liste
+"Projets") n'était pas ce que tu décrivais dans ton handoff ("Pedro OS
+doit être le seul élément") : vérifié en navigateur, les 10 projets
+restaient listés, mais 9 avaient perdu leur vraie description au profit
+de "État non encore publié.". Ruth a vu ça et a dit non : "JE VEUX L'ÉTAT
+D'AVANT".
+
+Reverté ciblé sur `buildViewModel()` — retour à `project.tagline` pour
+tous, comme avant ton changement. Ton travail n'était jamais commité, donc
+pas de commit de retour nécessaire : le dépôt est déjà dans l'état correct
+(vérifié : `git status` propre sur ce fichier, il correspond au dernier
+commit réel).
+
+Rien d'autre touché — le reste de ton travail de cette session (async,
+hygiène des missions, réponses groundées, détection de décision non
+vérifiée) reste en place, commité.
