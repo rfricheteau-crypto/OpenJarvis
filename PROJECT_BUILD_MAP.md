@@ -420,8 +420,19 @@ nouvelle mission `mission_ready_not_executed`, dernier résultat séparé
 `MISSION_TEST_RECU + TESTED`. Tests ciblés 10/10. Détail :
 `HANDOFFS/2026-08-31_Codex_voice-mission-audit-needs-claude-ui.md`.
 
+**HYGIÈNE DES MISSIONS (Codex, 2026-09-01)** : anomalie réelle corrigée :
+l'observateur créait une mission pour chaque phrase de chat, y compris une
+salutation ou une transcription dégradée (`...`). Il ne prépare désormais une
+mission que pour une demande de travail explicite. Test HTTP réel : demande
+Pedro / Bloc Sécurité → mission liée au Bloc 20, route Codex prête,
+`execution_allowed=false`; salutation suivante → la mission est conservée,
+non remplacée. Tests serveur ciblés 11/11 et tests `hermes_core` policy/
+orchestrateur 12/12. Aucun agent n'a été lancé par ce test.
+
 **RUTH_DECISION_REQUIRED** : brancher le chat quotidien à l'orchestrateur (au-delà de l'observation) — décision à prendre, pas commencé.
-**PROCHAINE ACTION** : décider si/quand brancher `decision_engine.py` au chat réel ; supprimer ou fusionner `routing/*.toml`.
+**PROCHAINE ACTION** : Codex branche le cycle explicite chat → mission →
+préparation de validation → routeur existant ; Claude rend ce cycle visible
+dans G. Aucun envoi automatique à un agent.
 
 ---
 
