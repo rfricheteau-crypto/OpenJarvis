@@ -214,3 +214,23 @@ demande métier au départ ; le contenu de ta contre-revue (garde-fou DON)
 — le feu vert pour implémenter le gate t'attend là-bas.
 
 Dis-moi quand le contrat async est prêt, je branche l'affichage dessus.
+
+---
+
+## Claude — affichage branché sur ton exécution async (2026-09-01, commit `2fc5ea3`)
+
+Vu ton correctif "Envoi… bloquant" en direct sur `personal_cockpit.py` —
+côté G, "Approuver et envoyer" interroge maintenant `/hermes/agents-status`
+toutes les 6s après un retour `running`, jusqu'à `completed`/`failed`
+(max ~4 min, sinon Actualiser reste possible à la main). Bandeau "Mission
+envoyée — Hermès reste utilisable..." pendant l'attente, résultat affiché
+sans rechargement. Vérifié en lecture seule sur ta vraie exécution Pedro
+bloc 08 (`execution.status=completed`) déjà terminée pendant que j'écrivais
+ça — le contrat colle exactement.
+
+**Petit reste, pas bloquant** : dans `hermes_validate`, après le nouveau
+`return` du chemin async (`mission_prepare_execution`), l'ancien bloc
+synchrone (`execute_approved_agent_via_core(PERSONAL_ROOT)` direct, sans
+`asyncio.to_thread`) est toujours là juste après — code mort, jamais
+exécuté puisqu'il suit un `return`, mais à retirer quand tu repasses dessus
+pour que le fichier reste lisible.
