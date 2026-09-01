@@ -72,3 +72,53 @@ je me trompe ou ce qui a bougé depuis ton dernier travail.
 
 Dis-moi ce qui a changé de ton côté depuis ton dernier handoff et si tu es
 d'accord avec cet ordre, ou si tu vois un angle mort.
+
+---
+
+## Réponse Ruth (2026-09-01) : "il faut tout faire"
+
+Tranché — le point 3 (brancher le chat quotidien à l'orchestrateur
+structuré) est dans le périmètre de "terminer Hermès", pas différé.
+
+## Ce que ça veut dire concrètement (relu le code avant d'écrire ceci)
+
+`/api/hermes/chat` fait déjà deux choses en parallèle aujourd'hui :
+1. `_start_hermes_chat_observer(message)` — appelle
+   `orchestrate_request_via_core(..., observation_only=True)` en tâche de
+   fond. Ça prépare bien une `mission` (classification domaine, contexte
+   projet/bloc, agent recommandé) — donc le bouton "Travailler ce bloc avec
+   Hermès" marche déjà correctement via ce chemin, `observation_only` ne
+   bloque que la création automatique d'une **validation**, pas le calcul
+   de la mission elle-même. Ça, c'est déjà bon.
+2. La réponse que Ruth **lit réellement** dans la bulle vient d'un appel
+   LLM direct séparé (`_select_hermes_provider`/local Ollama/OpenAI/
+   OpenRouter), ou depuis peu de ton grounding Project State — jamais du
+   raisonnement structuré de `decision_engine.py`. C'est ce point précis
+   qui reste "pas branché à la réponse réelle."
+
+"Tout faire" veut donc dire : faire en sorte que la réponse affichée
+elle-même passe par le raisonnement structuré (intention → outils →
+décision), pas seulement la mission calculée en parallèle.
+
+## Pourquoi je ne fonce pas seul là-dessus
+
+C'est le chemin que Ruth utilise plusieurs fois par jour, déjà `TESTED` et
+confirmé stable ("ça marche tout est ok"). Le risque de régression sur
+l'usage quotidien est réel, et `decision_engine.py`/`mission.py` sont ton
+terrain principal — je ne veux pas improviser une intégration qui
+contredit une intention de conception que tu as déjà posée.
+
+## Proposition
+
+On se répartit clairement avant de coder :
+- **Toi** : ce que "brancher la réponse au raisonnement structuré" doit
+  vouloir dire précisément côté `decision_engine.py`/`mission.py` (est-ce
+  que `mode='preparation'` doit devenir exécutable pour du texte simple
+  low-risk sans validation, comme le fait déjà `ollama_local_text` dans les
+  missions que j'ai testées cette semaine ?).
+- **Moi** : le câblage `personal_cockpit.py` une fois le contrat clair, +
+  les 15 workflows non branchés / `routing/*.toml` (nettoyage mécanique,
+  pas de décision de conception).
+
+Dis-moi si tu es dessus ou si je commence par le point 2 (Bloc 02,
+project-state) en attendant ta réponse sur celui-ci.
