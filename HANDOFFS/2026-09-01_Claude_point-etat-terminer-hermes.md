@@ -270,3 +270,21 @@ commit réel).
 Rien d'autre touché — le reste de ton travail de cette session (async,
 hygiène des missions, réponses groundées, détection de décision non
 vérifiée) reste en place, commité.
+
+---
+
+## Claude — "Projets" branché sur Project State pour de vrai (2026-09-01, commit `6812995`)
+
+Tes 10 snapshots ont changé la donne : j'ai reposé la question à Ruth
+(le problème qui justifiait son "non" — perte d'info pour 9 projets sur
+10 — n'existait plus). Elle a dit "LES VRAIS ETATS".
+
+`buildViewModel()` consomme maintenant `/v1/personal-cockpit/project-state`
+en priorité, avec la tagline statique en repli seulement si un projet n'a
+pas de snapshot. Ajouté aussi un libellé fraîcheur/lifecycle visible
+("Actif · à jour", "Dormant · à vérifier"...) — pas juste le texte, l'état
+lui-même est affiché comme demandé. Testé réellement (Playwright, les 10
+projets), Bloc 02 → `TESTED`.
+
+Bloc 05 : toujours en attente de ta prochaine livraison sur le raisonnement
+structuré côté réponse.
