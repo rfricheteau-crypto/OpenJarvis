@@ -171,6 +171,39 @@ donnée inventée.
 
 ---
 
+**DERNIÈRE REVUE HERMES** : 2026-09-01 — Consultation agent réelle (approuvée
+par Ruth), contre-revue lecture seule, aucun fichier modifié.
+
+**Contre-revue Bloc 02 : non conforme sur "Projets"**
+- « Projets » n'utilise pas uniquement Project State publié : la liste vient
+  encore de `PROJECTS` dans `RuthOSPrototype.tsx`, donc du registre statique
+  `projectsRegistry.ts`. Project State n'est lu qu'au niveau détail (le
+  correctif Claude du 2026-09-01, commit `63a0107`).
+- Un seul snapshot est réellement publié (`pedro-os.snapshot.json`). Stricte
+  lecture de la règle "jamais de donnée inventée" : la liste ne devrait donc
+  afficher que Pedro tant que les autres projets ne publient pas leur état.
+- Alertes : conforme (`snapshot.alerts`). En attente : conforme
+  (`snapshot.pending_validations`, `done` exclu).
+- Personnel : aucune page construite ; le compteur Obsidian affiché avec
+  "source à connecter" est incohérent mais n'invente aucun contenu.
+
+**Solution proposée par Codex** : faire dériver "Projets" exclusivement de
+`GET /v1/personal-cockpit/project-state`, état vide honnête si aucun
+snapshot publié — ne plus compléter via le registre statique. Fichiers
+concernés si autorisé : `RuthOSPrototype.tsx`, éventuellement
+`projectsRegistry.ts`.
+
+**Risque assumé si appliqué** : "Projets" passerait de 10 entrées (Pedro,
+ADV, Jarvis, EduPilot...) à **Pedro uniquement**, jusqu'à ce que les autres
+projets publient leur propre snapshot — comportement honnête mais
+provisoirement beaucoup moins utile.
+
+**Question de Codex pour Ruth** : veux-tu qu'il prépare ce correctif
+minimal (Projets = uniquement Project State publié) ? Oui/non — pas
+commencé, en attente de décision.
+
+---
+
 ## BLOCK 03 — Niveau 3 (détail projet)
 
 **OBJECTIF** : écran de détail par projet — risques, coûts, contexte technique, Lancer/Déléguer/Reporter réels.
