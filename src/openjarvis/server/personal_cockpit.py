@@ -31,6 +31,8 @@ WORKING_DIR = PERSONAL_ROOT / "memory" / "working"
 INTEGRATIONS_DIR = PERSONAL_ROOT / "integrations"
 HERMES_DIR = PERSONAL_ROOT / "runtime" / "hermes"
 RUTH_OS_BRIDGE_DIR = Path.home() / "CODEX_RUTH_OS" / "CORE" / "bridge"
+PROJECT_STATE_SNAPSHOTS_DIR = Path.home() / "CODEX_RUTH_OS" / "CORE" / "project-state" / "snapshots"
+_PROJECT_STATE_REQUIRED_FIELDS = frozenset({"schema_version", "project", "freshness", "state"})
 
 STATE_PATH = VOICE_DIR / "v4_state.json"
 SESSIONS_PATH = VOICE_DIR / "v4_sessions.jsonl"
@@ -355,6 +357,30 @@ def _hermes_core_observer_api():
     return orchestrate_request_via_core
 
 
+_HERMES_TASK_INTENT_RE = re.compile(
+    r"\b(?:"
+    r"il faut\s+(?:regarder|travailler|préparer|analyser|auditer|corriger|tester|terminer|continuer|reprendre|lancer|créer)"
+    r"|on\s+travaille"
+    r"|(?:travail(?:ler|le)|prépar(?:er|e)|analys(?:er|e)|audit(?:er|e)|corrig(?:er|e)|test(?:er|e)|termin(?:er|e)|continu(?:er|e)|reprend(?:re|s)|lanc(?:er|e)|cré(?:er|e)|fai(?:re|s))\b"
+    r"|aide[\s-]*moi"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _should_prepare_hermes_mission(message: str) -> bool:
+    """Retourne vrai uniquement pour une demande de travail explicite.
+
+    Le chat reste une conversation : une salutation, une question d'état ou
+    une transcription STT dégradée ne doit jamais écraser la mission proposée.
+    Une mission peut ensuite être préparée volontairement via l'UI, mais parler
+    à Hermès ne crée toujours aucune validation ni délégation.
+    """
+    normalized = " ".join(message.split())
+    meaningful = re.sub(r"[^\wÀ-ÿ]", "", normalized, flags=re.UNICODE)
+    return len(meaningful) >= 8 and bool(_HERMES_TASK_INTENT_RE.search(normalized))
+
+
 async def _observe_hermes_chat_request(message: str) -> None:
     """Journalise un plan Hermès sans perturber ni modifier la conversation."""
     try:
@@ -373,6 +399,10 @@ async def _observe_hermes_chat_request(message: str) -> None:
 
 def _start_hermes_chat_observer(message: str) -> asyncio.Task[None]:
     """Keep the background observer alive until it has safely completed."""
+    if not _should_prepare_hermes_mission(message):
+        async def _no_mission() -> None:
+            return None
+        return asyncio.create_task(_no_mission())
     task = asyncio.create_task(_observe_hermes_chat_request(message))
     _HERMES_OBSERVER_TASKS.add(task)
     task.add_done_callback(_HERMES_OBSERVER_TASKS.discard)
@@ -774,6 +804,49 @@ def _short_hermes_context() -> str:
     for line in personalization.get("summary_lines", [])[:3]:
         snippets.append(line)
     return "\n".join(snippets)
+
+
+def _project_block_status_reply(message: str) -> str | None:
+    """Answer a project-block question only from published project state.
+
+    This fast path avoids both a cloud call and a plausible but false answer
+    when a voice transcript contains a project/block request.  It purposely
+    does not infer a missing next block from prose.
+    """
+    if not re.search(r"(?i)\bblocs?\b", message):
+        return None
+
+    message_tokens = set(re.findall(r"[\w-]{3,}", message.casefold()))
+    candidates: list[dict[str, Any]] = []
+    for item in _published_project_states().get("projects", []):
+        project = item.get("project") if isinstance(item, dict) else None
+        if not isinstance(project, dict):
+            continue
+        aliases = set(re.findall(r"[\w-]{3,}", f"{project.get('id', '')} {project.get('name', '')}".casefold()))
+        if aliases & message_tokens:
+            candidates.append(item)
+
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        names = ", ".join(str(item["project"]["name"]) for item in candidates)
+        return f"Je vois plusieurs projets possibles ({names}). Lequel veux-tu suivre ?"
+
+    item = candidates[0]
+    project = item["project"]
+    state = item.get("state") if isinstance(item.get("state"), dict) else {}
+    name = str(project.get("name") or "ce projet")
+    active_block = str(state.get("active_block") or "").strip()
+    next_action = str(state.get("next_action") or "").strip()
+    if not active_block and not next_action:
+        return f"Je reconnais {name}, mais aucun bloc publié n’est disponible. Je ne vais pas en inventer un."
+
+    parts = [f"Pour {name}, le bloc actif publié est {active_block.rstrip('.!? ')}." if active_block else f"Pour {name}, aucun bloc actif n’est publié."]
+    if next_action:
+        parts.append(f"Prochaine action publiée : {next_action.rstrip('.!? ')}.")
+    else:
+        parts.append("La source ne publie pas encore de prochain bloc ; je ne vais pas le deviner.")
+    return " ".join(parts)
 
 
 def _hermes_messages(message: str, history: list[HermesChatTurn]) -> list[dict[str, str]]:
@@ -2696,6 +2769,72 @@ def _project_blocks_module():
     return project_blocks
 
 
+def _published_project_states() -> dict[str, Any]:
+    """Return a safe, read-only projection of published RuthOS project snapshots.
+
+    The snapshots remain owned by their source projects.  This endpoint never
+    regenerates, modifies, or guesses project data.  Invalid or temporarily
+    unreadable files are reported as warnings and are deliberately excluded.
+    """
+    projects: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    try:
+        paths = sorted(PROJECT_STATE_SNAPSHOTS_DIR.glob("*.snapshot.json"))
+    except OSError:
+        logger.warning("Project State directory read failed (skipped)")
+        return {"projects": [], "warnings": ["Snapshots Project State indisponibles."], "source": "project-state"}
+
+    for path in paths:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Invalid Project State snapshot skipped: %s", path.name)
+            warnings.append(f"Snapshot ignoré car invalide : {path.name}")
+            continue
+
+        if not isinstance(raw, dict) or not _PROJECT_STATE_REQUIRED_FIELDS.issubset(raw):
+            logger.warning("Incomplete Project State snapshot skipped: %s", path.name)
+            warnings.append(f"Snapshot ignoré car incomplet : {path.name}")
+            continue
+
+        project = raw.get("project")
+        freshness = raw.get("freshness")
+        state = raw.get("state")
+        if not all(isinstance(item, dict) for item in (project, freshness, state)):
+            logger.warning("Malformed Project State snapshot skipped: %s", path.name)
+            warnings.append(f"Snapshot ignoré car malformé : {path.name}")
+            continue
+        project_id = project.get("id")
+        project_name = project.get("name")
+        if not isinstance(project_id, str) or not project_id or not isinstance(project_name, str) or not project_name:
+            logger.warning("Unnamed Project State snapshot skipped: %s", path.name)
+            warnings.append(f"Snapshot ignoré sans projet identifiable : {path.name}")
+            continue
+
+        # No absolute local paths, source file names, or provenance details are
+        # needed by the cockpit.  Keep the UI projection deliberately small.
+        projects.append({
+            "schema_version": raw["schema_version"],
+            "project": {"id": project_id, "name": project_name},
+            "freshness": {
+                "status": freshness.get("status"),
+                "observed_at": freshness.get("observed_at"),
+                "stale_after_days": freshness.get("stale_after_days"),
+            },
+            "state": {
+                "lifecycle": state.get("lifecycle"),
+                "summary": state.get("summary"),
+                "active_block": state.get("active_block"),
+                "next_action": state.get("next_action"),
+                "decisions_required": state.get("decisions_required", []),
+                "blockers": state.get("blockers", []),
+                "risks": state.get("risks", []),
+            },
+        })
+
+    return {"projects": projects, "warnings": warnings, "source": "project-state"}
+
+
 @router.get("/project-blocks/{project_id}")
 async def get_project_blocks(project_id: str):
     """Blocs A-Z réels d'un projet, lus en direct depuis son fichier de suivi.
@@ -2706,6 +2845,12 @@ async def get_project_blocks(project_id: str):
     except Exception:
         logger.exception("get_project_blocks failed for %s", project_id)
         return {"project_id": project_id, "tracked": False, "source_path": None, "blocks": []}
+
+
+@router.get("/project-state")
+async def get_project_state():
+    """Expose only explicitly published Project State snapshots, read-only."""
+    return _published_project_states()
 
 
 def _safe_read_text(path: Path) -> str | None:
@@ -2985,13 +3130,26 @@ async def get_proposed_mission():
     jamais d'approbation toute seule."""
     mission = _load_json(CURRENT_MISSION_PATH) or {}
     route = _load_json(CURRENT_AGENT_ROUTE_PATH) or {}
+    core_state = _load_json(HERMES_CORE_STATE_PATH) or {}
+    validation_state = _load_json(HERMES_VALIDATION_STATE_PATH) or {}
+    mission_history = core_state.get("mission_history") if isinstance(core_state.get("mission_history"), list) else []
+    # Expose only the UI-safe mission proof. The current mission remains the
+    # active pointer; history is intentionally distinct so a new observation
+    # cannot visually erase an earlier result.
+    mission_history = [entry for entry in mission_history if isinstance(entry, dict)][-12:]
+    last_resolved = validation_state.get("last_resolved") if isinstance(validation_state.get("last_resolved"), dict) else {}
+    last_execution = {
+        key: last_resolved.get(key)
+        for key in ("mission_request_id", "execution_status", "result_summary", "executed_at", "resolved_at", "requested_agent", "executed_by", "fallback_used")
+        if last_resolved.get(key) not in (None, "")
+    }
     if not mission or not CURRENT_MISSION_PATH.exists():
-        return {"has_mission": False, "mission": None, "route": None}
+        return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
     generated_at = datetime.fromtimestamp(CURRENT_MISSION_PATH.stat().st_mtime).isoformat(timespec="seconds")
     age_hours = (datetime.now() - datetime.fromtimestamp(CURRENT_MISSION_PATH.stat().st_mtime)).total_seconds() / 3600
     if age_hours > PROPOSED_MISSION_STALE_HOURS:
-        return {"has_mission": False, "mission": None, "route": None, "expired_at": generated_at}
-    return {"has_mission": True, "mission": mission, "route": route, "generated_at": generated_at}
+        return {"has_mission": False, "mission": None, "route": None, "expired_at": generated_at, "mission_history": mission_history, "last_execution": last_execution or None}
+    return {"has_mission": True, "mission": mission, "route": route, "generated_at": generated_at, "mission_history": mission_history, "last_execution": last_execution or None}
 
 
 # Panneau "Agents / Système" (demande Ruth 2026-08-31, fusion Jarvis G +
@@ -3335,6 +3493,24 @@ async def hermes_chat(request_body: HermesChatRequest, request: Request):
     config = _hermes_chat_config()
     runtime = _hermes_chat_runtime_summary()
     engine_mode = request_body.engine_mode
+    grounded_project_reply = _project_block_status_reply(request_body.message)
+    if grounded_project_reply:
+        return {
+            "reply": grounded_project_reply,
+            "engine": "grounded",
+            "provider": "project-state",
+            "mode": engine_mode,
+            "model": "none",
+            "selection_reason": "État projet publié : réponse factuelle sans appel au modèle.",
+            "used_memory": True,
+            "source": "hermes_project_state",
+            "warning": "",
+            "fallback_used": False,
+            "budget": runtime["budget"],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "estimated_cost_usd": 0.0,
+            "local_limited": False,
+        }
     fallback_used = False
     warning = ""
     engine_used = "local"
