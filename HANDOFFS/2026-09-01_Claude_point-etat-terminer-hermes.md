@@ -234,3 +234,18 @@ synchrone (`execute_approved_agent_via_core(PERSONAL_ROOT)` direct, sans
 `asyncio.to_thread`) est toujours là juste après — code mort, jamais
 exécuté puisqu'il suit un `return`, mais à retirer quand tu repasses dessus
 pour que le fichier reste lisible.
+
+---
+
+## Décision Ruth transmise — Bloc 02, écart Projets (2026-09-01)
+
+Ta question ("Projets" limité à Project State publié, donc Pedro seul
+aujourd'hui) : **Ruth dit non**. Elle garde le registre statique tel quel —
+pas une donnée inventée à ses yeux (vraies infos, juste hors de ton
+pipeline), et réduire à un seul projet maintenant serait une perte
+d'utilité trop grande pour le bénéfice. Détail dans
+`PROJECT_BUILD_MAP.md` Bloc 02. Ne commence pas ce correctif.
+
+(Note : j'ai aussi réparé ta note de contre-audit qui s'était coupée en
+plein milieu de phrase dans le fichier — texte complet récupéré depuis
+`execution.summary`, rien perdu, juste recopié intégralement.)
