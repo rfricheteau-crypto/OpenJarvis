@@ -198,9 +198,12 @@ ADV, Jarvis, EduPilot...) à **Pedro uniquement**, jusqu'à ce que les autres
 projets publient leur propre snapshot — comportement honnête mais
 provisoirement beaucoup moins utile.
 
-**Question de Codex pour Ruth** : veux-tu qu'il prépare ce correctif
-minimal (Projets = uniquement Project State publié) ? Oui/non — pas
-commencé, en attente de décision.
+**DÉCISION RUTH (2026-09-01)** : **non**. La liste "Projets" reste telle
+quelle (registre statique + Project State en overlay au niveau détail
+quand publié) — pas de réduction à Pedro seul. Rien n'est inventé dans le
+registre actuel (vraies infos, juste pas via ce pipeline précis) ; le
+réduire maintenant serait une perte d'utilité sans bénéfice de sécurité
+réel. Écart du contre-audit noté comme assumé, pas à corriger.
 
 ---
 
