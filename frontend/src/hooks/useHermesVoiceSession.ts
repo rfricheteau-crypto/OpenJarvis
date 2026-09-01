@@ -52,7 +52,14 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const pingTimerRef = useRef<number | null>(null);
+  const localVadContextRef = useRef<AudioContext | null>(null);
+  const localVadSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const localVadAnalyserRef = useRef<AnalyserNode | null>(null);
+  const localVadFrameRef = useRef<number | null>(null);
+  const localSpeechFramesRef = useRef(0);
+  const localBargeMutedRef = useRef(false);
   const manualDisconnectRef = useRef(false);
+  const runtimeStateRef = useRef<HermesVoiceRuntimeState>('idle');
   const onMessageRef = useRef(options.onMessage);
   const onDiagnosticRef = useRef(options.onDiagnostic);
 
@@ -62,6 +69,9 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
   useEffect(() => {
     onDiagnosticRef.current = options.onDiagnostic;
   }, [options.onDiagnostic]);
+  useEffect(() => {
+    runtimeStateRef.current = runtimeState;
+  }, [runtimeState]);
 
   const emitDiagnostic = useCallback((message: string, level: 'info' | 'warn' | 'error' = 'info') => {
     onDiagnosticRef.current?.(message, level);
@@ -99,10 +109,70 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
     void el.play().catch(() => {});
   }, [setRemoteTrackEnabled]);
 
+  // The server remains authoritative for the conversational turn.  This tiny
+  // local VAD only mutes remote playback at the first audible interruption,
+  // avoiding a server/VAD/data-channel round trip before Ruth hears silence.
+  const startLocalBargeMonitor = useCallback((stream: MediaStream) => {
+    if (!window.AudioContext) return;
+    try {
+      const context = new AudioContext();
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.35;
+      source.connect(analyser);
+      localVadContextRef.current = context;
+      localVadSourceRef.current = source;
+      localVadAnalyserRef.current = analyser;
+      const samples = new Uint8Array(analyser.fftSize);
+      const monitor = () => {
+        analyser.getByteTimeDomainData(samples);
+        let squareSum = 0;
+        for (const sample of samples) {
+          const value = (sample - 128) / 128;
+          squareSum += value * value;
+        }
+        const rms = Math.sqrt(squareSum / samples.length);
+        if (runtimeStateRef.current === 'SPEAKING' && rms >= 0.035) {
+          localSpeechFramesRef.current += 1;
+          if (localSpeechFramesRef.current >= 4 && !localBargeMutedRef.current) {
+            localBargeMutedRef.current = true;
+            cutRemoteAudio();
+            emitDiagnostic('voice_local_barge_audio_cut');
+          }
+        } else {
+          localSpeechFramesRef.current = 0;
+        }
+        localVadFrameRef.current = window.requestAnimationFrame(monitor);
+      };
+      void context.resume().catch(() => {});
+      localVadFrameRef.current = window.requestAnimationFrame(monitor);
+    } catch {
+      emitDiagnostic('voice_local_barge_unavailable', 'warn');
+    }
+  }, [cutRemoteAudio, emitDiagnostic]);
+
   const teardown = useCallback(() => {
     if (pingTimerRef.current != null) {
       window.clearInterval(pingTimerRef.current);
       pingTimerRef.current = null;
+    }
+    if (localVadFrameRef.current != null) {
+      window.cancelAnimationFrame(localVadFrameRef.current);
+      localVadFrameRef.current = null;
+    }
+    localSpeechFramesRef.current = 0;
+    localBargeMutedRef.current = false;
+    try {
+      localVadSourceRef.current?.disconnect();
+      localVadAnalyserRef.current?.disconnect();
+    } catch {}
+    localVadSourceRef.current = null;
+    localVadAnalyserRef.current = null;
+    const localVadContext = localVadContextRef.current;
+    localVadContextRef.current = null;
+    if (localVadContext && localVadContext.state !== 'closed') {
+      void localVadContext.close().catch(() => {});
     }
     try {
       dcRef.current?.close();
@@ -159,6 +229,8 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         } else if (name === 'barge_in_start') {
           cutRemoteAudio();
         } else if (name === 'audio_play_start') {
+          localBargeMutedRef.current = false;
+          localSpeechFramesRef.current = 0;
           resumeRemoteAudio();
         }
       }
@@ -181,6 +253,7 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
         streamRef.current = stream;
+        startLocalBargeMonitor(stream);
 
         const pc = new RTCPeerConnection();
         pcRef.current = pc;
@@ -263,7 +336,7 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         throw err instanceof Error ? err : new Error(message);
       }
     },
-    [emitDiagnostic, handleDataChannelMessage, teardown],
+    [emitDiagnostic, handleDataChannelMessage, startLocalBargeMonitor, teardown],
   );
 
   useEffect(() => {
