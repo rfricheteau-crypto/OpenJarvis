@@ -64,7 +64,8 @@ export function Sidebar() {
       {!sidebarOpen && (
         <button
           onClick={toggleSidebar}
-          className="fixed top-3 left-3 z-30 p-2 rounded-lg transition-colors cursor-pointer"
+          className="fixed top-3 left-3 z-30 min-w-11 min-h-11 inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer"
+          aria-label="Ouvrir le menu"
           style={{ color: 'var(--color-text-secondary)', background: 'var(--color-bg-secondary)' }}
           onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
           onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-bg-secondary)')}
@@ -91,7 +92,8 @@ export function Sidebar() {
           <div className="flex items-center justify-between px-3 pt-3 pb-2">
             <button
               onClick={toggleSidebar}
-              className="p-2 rounded-lg transition-colors cursor-pointer"
+              className="min-w-11 min-h-11 inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer"
+              aria-label="Fermer le menu"
               style={{ color: 'var(--color-text-secondary)' }}
               onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-tertiary)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
