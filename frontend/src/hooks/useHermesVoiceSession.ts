@@ -83,9 +83,7 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
     });
   }, []);
 
-  // Coupe le rendu local immédiatement (contrat, section barge-in) — le
-  // runtime pilote l'arrêt réel du tour côté serveur.
-  const cutRemoteAudio = useCallback(() => {
+  const suppressRemoteAudio = useCallback(() => {
     const el = audioElRef.current;
     if (!el) return;
     try {
@@ -95,6 +93,12 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
     setRemoteTrackEnabled(false);
     el.srcObject = null;
   }, [setRemoteTrackEnabled]);
+
+  // Coupe le rendu local immédiatement (contrat, section barge-in) — le
+  // runtime pilote l'arrêt réel du tour côté serveur.
+  const cutRemoteAudio = useCallback(() => {
+    suppressRemoteAudio();
+  }, [suppressRemoteAudio]);
 
   // Réarme la lecture au tour suivant — sans ça, une seule coupure rend la
   // voix silencieuse en permanence (bug trouvé au test humain du 2026-08-31).
@@ -196,6 +200,10 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
   const endSession = useCallback(() => {
     manualDisconnectRef.current = true;
     teardown();
+    // React applique setState au prochain rendu. Le canal WebRTC peut, lui,
+    // recevoir un nouveau message avant ce rendu : tenir la ref synchrone
+    // évite de prendre le message d'accueil du nouveau tour pour une réponse.
+    runtimeStateRef.current = 'idle';
     setRuntimeState('idle');
     setDetail(null);
   }, [teardown]);
@@ -210,7 +218,9 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         return;
       }
       if (payload.type === 'state' && typeof (payload as { state?: unknown }).state === 'string') {
-        setRuntimeState((payload as { state: string }).state as HermesVoiceRuntimeState);
+        const nextState = (payload as { state: string }).state as HermesVoiceRuntimeState;
+        runtimeStateRef.current = nextState;
+        setRuntimeState(nextState);
         setDetail(typeof (payload as { detail?: unknown }).detail === 'string' ? (payload as { detail: string }).detail : null);
         return;
       }
@@ -218,7 +228,9 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         const role = typeof (payload as { role?: unknown }).role === 'string' ? (payload as { role: string }).role : 'assistant';
         const text = typeof (payload as { text?: unknown }).text === 'string' ? (payload as { text: string }).text : '';
         const confidence = typeof (payload as { confidence?: unknown }).confidence === 'number' ? (payload as { confidence: number }).confidence : undefined;
-        if (text) onMessageRef.current?.({ role, text, confidence });
+        if (text) {
+          onMessageRef.current?.({ role, text, confidence });
+        }
         return;
       }
       if (payload.type === 'event') {
@@ -243,6 +255,10 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
       if (pcRef.current) return; // session déjà active — un seul bouton, pas de double ouverture
       manualDisconnectRef.current = false;
       setError(null);
+      // Idem : ne jamais laisser l'état THINKING du tour précédent survivre
+      // entre le clic et le premier événement data-channel de la nouvelle
+      // session.
+      runtimeStateRef.current = 'connecting';
       setRuntimeState('connecting');
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
@@ -325,6 +341,7 @@ export function useHermesVoiceSession(options: UseHermesVoiceSessionOptions = {}
         const answer = (await res.json()) as { sdp: string; type: RTCSdpType };
         await pc.setRemoteDescription({ sdp: answer.sdp, type: answer.type });
 
+        runtimeStateRef.current = 'LISTENING_ARMED';
         setRuntimeState('LISTENING_ARMED');
         emitDiagnostic('voice_session_connected');
       } catch (err) {
