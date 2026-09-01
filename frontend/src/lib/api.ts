@@ -306,6 +306,8 @@ export interface LastExecutionInfo {
   requested_agent?: string;
   executed_by?: string;
   fallback_used?: boolean;
+  /** Agent report claims a Ruth decision that is not verified in the decision register. */
+  contains_unverified_ruth_decision_claim?: boolean;
 }
 
 export interface ProposedMissionResponse {

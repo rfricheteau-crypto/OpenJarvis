@@ -24,6 +24,7 @@ router = APIRouter(prefix="/v1/personal-cockpit", tags=["personal-cockpit"])
 hermes_chat_router = APIRouter(prefix="/api/hermes", tags=["hermes-chat"])
 logger = logging.getLogger("openjarvis.server.personal_cockpit")
 _HERMES_OBSERVER_TASKS: set[asyncio.Task[None]] = set()
+_HERMES_EXECUTION_TASKS: set[asyncio.Task[None]] = set()
 
 PERSONAL_ROOT = Path.home() / ".openjarvis" / "jarvis-personal"
 VOICE_DIR = PERSONAL_ROOT / "runtime" / "voice"
@@ -61,6 +62,7 @@ HERMES_OPENAI_USAGE_LOG_PATH = HERMES_DIR / "openai_usage_log.jsonl"
 HERMES_OPENAI_BUDGET_STATE_PATH = HERMES_DIR / "openai_budget_state.json"
 HERMES_PENDING_VALIDATIONS_PATH = HERMES_DIR / "pending_validations.json"
 HERMES_VALIDATION_STATE_PATH = HERMES_DIR / "validation_state.json"
+HERMES_EXECUTION_STATUS_PATH = HERMES_DIR / "current_execution.json"
 HERMES_ALERT_ACTIONS_LOG_PATH = HERMES_DIR / "alert_actions.jsonl"
 HERMES_CODEX_HANDOFF_EVENTS_LOG_PATH = HERMES_DIR / "codex_handoff_events.jsonl"
 HERMES_OBSIDIAN_ACTION_INBOX_PATH = HERMES_DIR / "obsidian_action_inbox.json"
@@ -366,6 +368,10 @@ _HERMES_TASK_INTENT_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_UNVERIFIED_RUTH_DECISION_CLAIM_RE = re.compile(
+    r"\b(?:validé|validée|approuvé|approuvée|décidé|décidée)\s+(?:par|avec)\s+Ruth\b",
+    re.IGNORECASE,
+)
 
 
 def _should_prepare_hermes_mission(message: str) -> bool:
@@ -407,6 +413,24 @@ def _start_hermes_chat_observer(message: str) -> asyncio.Task[None]:
     _HERMES_OBSERVER_TASKS.add(task)
     task.add_done_callback(_HERMES_OBSERVER_TASKS.discard)
     return task
+
+
+def _current_hermes_execution() -> dict[str, Any]:
+    payload = _load_json(HERMES_EXECUTION_STATUS_PATH) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_hermes_execution_status(*, status: str, mission_request_id: str, summary: str = "", error: str = "") -> None:
+    _write_json_atomic(
+        HERMES_EXECUTION_STATUS_PATH,
+        {
+            "status": status,
+            "mission_request_id": mission_request_id,
+            "summary": summary,
+            "error": error,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        },
+    )
 
 
 def _append_recent_trace_event(*, event_type: str, status: str, tool: str, notes: str) -> None:
@@ -3138,11 +3162,62 @@ async def get_proposed_mission():
     # cannot visually erase an earlier result.
     mission_history = [entry for entry in mission_history if isinstance(entry, dict)][-12:]
     last_resolved = validation_state.get("last_resolved") if isinstance(validation_state.get("last_resolved"), dict) else {}
-    last_execution = {
-        key: last_resolved.get(key)
-        for key in ("mission_request_id", "execution_status", "result_summary", "executed_at", "resolved_at", "requested_agent", "executed_by", "fallback_used")
-        if last_resolved.get(key) not in (None, "")
-    }
+    # Une validation approuvée n'est pas encore une exécution. Ne jamais la
+    # présenter comme « Dernière exécution réelle » pendant que l'agent tourne
+    # (sinon G affiche à tort « agent inconnu » avec le texte de validation).
+    # Mission history is the authoritative per-request trail. `last_resolved`
+    # is a legacy singleton and can lack the request id/agent after an async
+    # execution, which must not disconnect a result from its mission in G.
+    completed_history = next(
+        (
+            entry
+            for entry in reversed(mission_history)
+            if entry.get("execution_status") in {"executed", "result_logged"}
+            and entry.get("result_summary")
+        ),
+        None,
+    )
+    if completed_history:
+        last_execution = {
+            "mission_request_id": completed_history.get("request_id"),
+            "execution_status": completed_history.get("execution_status"),
+            "result_summary": completed_history.get("result_summary"),
+            "executed_at": completed_history.get("executed_at"),
+            "resolved_at": completed_history.get("resolved_at"),
+            "requested_agent": completed_history.get("requested_agent"),
+            "executed_by": completed_history.get("executed_by"),
+            "fallback_used": completed_history.get("fallback_used"),
+        }
+        last_execution = {key: value for key, value in last_execution.items() if value not in (None, "")}
+    else:
+        last_execution = (
+            {
+                key: last_resolved.get(key)
+                for key in ("mission_request_id", "execution_status", "result_summary", "executed_at", "resolved_at", "requested_agent", "executed_by", "fallback_used")
+                if last_resolved.get(key) not in (None, "")
+            }
+            if last_resolved.get("execution_status") in {"executed", "result_logged"}
+            else {}
+        )
+    # Le texte libre de l'agent n'est pas le registre de décisions de Ruth.
+    # On le conserve pour traçabilité mais marque toute affirmation de
+    # validation humaine, afin que l'UI la présente comme non confirmée.
+    if last_execution:
+        last_execution["contains_unverified_ruth_decision_claim"] = bool(
+            _UNVERIFIED_RUTH_DECISION_CLAIM_RE.search(str(last_execution.get("result_summary") or ""))
+        )
+    # `current_mission.json` is an execution pointer, not necessarily an open
+    # proposal. Once this exact request has a recorded result, leaving it in
+    # the proposal card makes G claim both “nothing launched” and “executed”.
+    # Keep the immutable result visible, but do not offer the same mission a
+    # second time.
+    if (
+        mission
+        and str(mission.get("request_id") or "")
+        and str(mission.get("request_id")) == str(last_execution.get("mission_request_id") or "")
+        and last_execution.get("execution_status") in {"executed", "result_logged"}
+    ):
+        return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
     if not mission or not CURRENT_MISSION_PATH.exists():
         return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
     generated_at = datetime.fromtimestamp(CURRENT_MISSION_PATH.stat().st_mtime).isoformat(timespec="seconds")
@@ -3179,6 +3254,7 @@ async def get_agents_status():
 
     delegation = _load_json(HERMES_DIR / "current_delegation.json") or {}
     mission = _load_json(CURRENT_MISSION_PATH) or {}
+    execution = _current_hermes_execution()
     mission_in_progress = bool(mission) and mission.get("status") == "mission_ready_not_executed"
 
     return {
@@ -3195,6 +3271,13 @@ async def get_agents_status():
             "active": mission_in_progress,
             "request_summary": mission.get("request_summary") if mission_in_progress else None,
             "project_id": (mission.get("project_context") or {}).get("project_id") if mission_in_progress else None,
+        },
+        "execution": {
+            "status": execution.get("status") or "idle",
+            "mission_request_id": execution.get("mission_request_id") or None,
+            "summary": execution.get("summary") or None,
+            "error": execution.get("error") or None,
+            "updated_at": execution.get("updated_at") or None,
         },
     }
 
@@ -3306,6 +3389,103 @@ async def prepare_execution(request_body: PrepareExecutionRequest):
     }
 
 
+async def _execute_approved_mission_in_background(
+    *,
+    pending: dict[str, Any],
+    action: str,
+    initial_result_summary: str,
+) -> None:
+    """Run one already-approved agent without blocking the HTTP/UI event loop."""
+    mission_request_id = str(pending.get("mission_request_id") or "")
+    try:
+        from hermes_core import execute_approved_agent_via_core
+
+        exec_result = await asyncio.to_thread(execute_approved_agent_via_core, PERSONAL_ROOT)
+        execution_status = str(exec_result.get("status") or "blocked")
+        result_summary = str(exec_result.get("result_summary") or initial_result_summary)
+        if execution_status != "executed":
+            _write_hermes_execution_status(
+                status="failed",
+                mission_request_id=mission_request_id,
+                summary=result_summary,
+                error=f"Exécution : {execution_status}",
+            )
+            return
+
+        mission = _load_json(CURRENT_MISSION_PATH) or {}
+        block_ctx = (mission.get("project_context") or {}).get("block") or {}
+        project_id = (mission.get("project_context") or {}).get("project_id")
+        if project_id and block_ctx.get("num"):
+            try:
+                pb = _project_blocks_module()
+                current_block = pb.get_block(project_id, block_ctx["num"])
+                if current_block:
+                    pb.update_block_status(
+                        project_id,
+                        block_ctx["num"],
+                        new_status=current_block.get("status") or "IN_PROGRESS",
+                        evidence=f"Consultation agent réelle (approuvée par Ruth) : {result_summary[:300]}",
+                        actor="hermes",
+                    )
+            except Exception:
+                logger.exception("update_block_status failed after async execution")
+
+        _, _, resolve_validation_via_core = _hermes_core_validation_api()
+        await asyncio.to_thread(
+            resolve_validation_via_core,
+            PERSONAL_ROOT,
+            resolution="approved",
+            execution_status="executed",
+            result_summary=result_summary,
+        )
+        last_validated = _validated_action_record(
+            action=action,
+            execution_status="executed",
+            result_summary=result_summary,
+            executable=None,
+        )
+        _sync_voice_validation_result(last_validated)
+        _append_jsonl(
+            ACTIONS_PATH,
+            {
+                "kind": "approved_delegation_handoff_completed",
+                "action": action,
+                "execution_status": "executed",
+                "source": "cockpit_async",
+            },
+        )
+        _write_hermes_execution_status(
+            status="completed",
+            mission_request_id=mission_request_id,
+            summary=result_summary,
+        )
+    except Exception as exc:
+        logger.exception("async approved agent execution failed")
+        _write_hermes_execution_status(
+            status="failed",
+            mission_request_id=mission_request_id,
+            error=str(exc),
+        )
+
+
+def _start_approved_mission_execution(*, pending: dict[str, Any], action: str, result_summary: str) -> None:
+    mission_request_id = str(pending.get("mission_request_id") or "")
+    _write_hermes_execution_status(
+        status="running",
+        mission_request_id=mission_request_id,
+        summary="Mission envoyée à l'agent approuvé.",
+    )
+    task = asyncio.create_task(
+        _execute_approved_mission_in_background(
+            pending=pending,
+            action=action,
+            initial_result_summary=result_summary,
+        )
+    )
+    _HERMES_EXECUTION_TASKS.add(task)
+    task.add_done_callback(_HERMES_EXECUTION_TASKS.discard)
+
+
 @hermes_chat_router.post("/validate")
 @router.post("/hermes/validate")
 async def hermes_validate(request_body: HermesValidationRequest):
@@ -3325,6 +3505,20 @@ async def hermes_validate(request_body: HermesValidationRequest):
     has_active_validation = isinstance(validation_state.get("active"), dict) and bool(validation_state.get("active"))
 
     if request_body.decision == "approve":
+        running_execution = _current_hermes_execution()
+        if running_execution.get("status") == "running":
+            return {
+                "ok": True,
+                "decision": "approve",
+                "executed": False,
+                "execution_status": "running",
+                "message": "Mission déjà en cours d'exécution.",
+                "agent": None,
+                "pending_validation": None,
+                "last_validated_action": None,
+                "resolved_validation": None,
+                "warning": "",
+            }
         result_summary = note or f"Validation cockpit approuvée pour : {action}"
         execution_status = "approved_for_handoff"
         try:
@@ -3353,6 +3547,43 @@ async def hermes_validate(request_body: HermesValidationRequest):
                     "la préparation pour la mission actuelle avant d'approuver."
                 )
             elif pending.get("source") == "mission_prepare_execution":
+                # Ruth a déjà cliqué explicitement « Approuver et envoyer ».
+                # Lancer l'agent hors de la requête HTTP évite de figer G et
+                # le backend pendant toute la durée d'un audit Codex/Claude.
+                # Cette tâche ne peut jamais être créée par le chat seul.
+                _start_approved_mission_execution(
+                    pending=pending,
+                    action=action,
+                    result_summary=result_summary,
+                )
+                last_validated = _validated_action_record(
+                    action=action,
+                    execution_status="running",
+                    result_summary="Mission envoyée à l'agent approuvé.",
+                    executable=executable_value,
+                )
+                _append_jsonl(
+                    ACTIONS_PATH,
+                    {
+                        "kind": "approved_delegation_handoff_started",
+                        "action": action,
+                        "execution_status": "running",
+                        "executable": executable_value,
+                        "source": "cockpit_async",
+                    },
+                )
+                return {
+                    "ok": True,
+                    "decision": "approve",
+                    "executed": False,
+                    "execution_status": "running",
+                    "message": "Mission envoyée. Hermès reste utilisable pendant l'exécution.",
+                    "agent": None,
+                    "pending_validation": None,
+                    "last_validated_action": last_validated,
+                    "resolved_validation": None,
+                    "warning": core_warning,
+                }
                 try:
                     from hermes_core import execute_approved_agent_via_core
                     exec_result = execute_approved_agent_via_core(PERSONAL_ROOT)

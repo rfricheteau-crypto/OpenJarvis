@@ -48,6 +48,29 @@ def test_greeting_never_starts_the_mission_observer(monkeypatch):
     assert calls == []
 
 
+def test_approved_execution_reports_running_before_background_completion(tmp_path, monkeypatch):
+    status_path = tmp_path / "current_execution.json"
+    started = []
+
+    async def background(**kwargs):
+        started.append(kwargs)
+
+    async def exercise():
+        monkeypatch.setattr(cockpit, "HERMES_EXECUTION_STATUS_PATH", status_path)
+        monkeypatch.setattr(cockpit, "_execute_approved_mission_in_background", background)
+        cockpit._start_approved_mission_execution(
+            pending={"mission_request_id": "mission-42"},
+            action="Déléguer à Codex",
+            result_summary="Approuvée par Ruth",
+        )
+        assert cockpit._current_hermes_execution()["status"] == "running"
+        task = next(iter(cockpit._HERMES_EXECUTION_TASKS))
+        await task
+
+    asyncio.run(exercise())
+    assert started[0]["pending"]["mission_request_id"] == "mission-42"
+
+
 def test_background_observer_task_is_kept_until_completion(monkeypatch):
     async def observer(_message: str):
         await asyncio.sleep(0)
@@ -92,6 +115,55 @@ def test_proposed_mission_keeps_history_separate_from_current_observation(tmp_pa
     assert payload["mission"]["request_id"] == "current"
     assert payload["mission_history"][0]["request_id"] == "completed"
     assert payload["last_execution"]["result_summary"] == "MISSION_TEST_RECU + TESTED"
+
+
+def test_pending_handoff_is_never_presented_as_a_real_execution(tmp_path, monkeypatch):
+    mission_path = tmp_path / "current_mission.json"
+    route_path = tmp_path / "current_agent_route.json"
+    core_state_path = tmp_path / "core_state.json"
+    validation_path = tmp_path / "validation_state.json"
+    mission_path.write_text(json.dumps({"request_id": "current", "status": "mission_ready_not_executed"}), encoding="utf-8")
+    route_path.write_text("{}", encoding="utf-8")
+    core_state_path.write_text("{}", encoding="utf-8")
+    validation_path.write_text(json.dumps({"last_resolved": {"execution_status": "approved_for_handoff", "result_summary": "Validation seulement"}}), encoding="utf-8")
+    monkeypatch.setattr(cockpit, "CURRENT_MISSION_PATH", mission_path)
+    monkeypatch.setattr(cockpit, "CURRENT_AGENT_ROUTE_PATH", route_path)
+    monkeypatch.setattr(cockpit, "HERMES_CORE_STATE_PATH", core_state_path)
+    monkeypatch.setattr(cockpit, "HERMES_VALIDATION_STATE_PATH", validation_path)
+
+    payload = asyncio.run(cockpit.get_proposed_mission())
+
+    assert payload["last_execution"] is None
+
+
+def test_executed_current_mission_is_not_still_proposed(tmp_path, monkeypatch):
+    mission_path = tmp_path / "current_mission.json"
+    route_path = tmp_path / "current_agent_route.json"
+    core_state_path = tmp_path / "core_state.json"
+    validation_path = tmp_path / "validation_state.json"
+    mission_path.write_text(json.dumps({"request_id": "already-executed", "status": "mission_ready_not_executed"}), encoding="utf-8")
+    route_path.write_text("{}", encoding="utf-8")
+    core_state_path.write_text(json.dumps({"mission_history": [{
+        "request_id": "already-executed",
+        "execution_status": "executed",
+        "result_summary": "Garde-fou DON validé par Ruth",
+        "executed_by": "codex",
+    }]}), encoding="utf-8")
+    validation_path.write_text(json.dumps({"last_resolved": {
+        "execution_status": "executed",
+        "result_summary": "Ancien état non corrélé",
+    }}), encoding="utf-8")
+    monkeypatch.setattr(cockpit, "CURRENT_MISSION_PATH", mission_path)
+    monkeypatch.setattr(cockpit, "CURRENT_AGENT_ROUTE_PATH", route_path)
+    monkeypatch.setattr(cockpit, "HERMES_CORE_STATE_PATH", core_state_path)
+    monkeypatch.setattr(cockpit, "HERMES_VALIDATION_STATE_PATH", validation_path)
+
+    payload = asyncio.run(cockpit.get_proposed_mission())
+
+    assert payload["has_mission"] is False
+    assert payload["mission"] is None
+    assert payload["last_execution"]["executed_by"] == "codex"
+    assert payload["last_execution"]["contains_unverified_ruth_decision_claim"] is True
 
 
 def test_project_state_exposes_only_valid_published_snapshots(tmp_path, monkeypatch):

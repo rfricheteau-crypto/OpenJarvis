@@ -2039,9 +2039,15 @@ function VariantG({
                     <p className="g-mission-summary">
                       {cleanText(lastExecution.result_summary, 'Résultat enregistré, sans résumé détaillé.')}
                     </p>
-                    <p className="g-mission-context">
-                      Les propositions du rapport ne sont pas des décisions Ruth : seule une validation enregistrée séparément fait foi.
-                    </p>
+                    {lastExecution.contains_unverified_ruth_decision_claim ? (
+                      <p className="g-mission-context g-system-warn">
+                        ⚠️ Correction Hermès : ce rapport affirme une décision Ruth qui n’est pas enregistrée. C’est une proposition, pas une validation.
+                      </p>
+                    ) : (
+                      <p className="g-mission-context">
+                        Les propositions du rapport ne sont pas des décisions Ruth : seule une validation enregistrée séparément fait foi.
+                      </p>
+                    )}
                     <p className="g-mission-agent">
                       Exécuté par <strong>{agent}</strong>
                       {lastExecution.fallback_used ? ' (repli automatique)' : ''}
