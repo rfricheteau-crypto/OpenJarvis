@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -1794,6 +1794,42 @@ function VariantG({
     }
   }, [preparingExecution, onRefresh]);
 
+  // Codex (2026-09-01) : "Approuver et envoyer" répond désormais tout de
+  // suite avec execution_status="running" au lieu d'attendre toute la durée
+  // de l'agent (correctif du blocage "Envoi…" qui figeait tout le backend).
+  // Ici on complète côté affichage : interroger le statut jusqu'à ce que
+  // l'exécution se termine, sans que Ruth ait besoin de cliquer Actualiser.
+  const [executionPolling, setExecutionPolling] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+  const pollExecutionStatus = useCallback(async () => {
+    setExecutionPolling(true);
+    const maxAttempts = 40; // ~4 min à 6s d'intervalle — au-delà, Actualiser reste possible manuellement.
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 6000));
+      if (!mountedRef.current) return;
+      try {
+        const status = await fetchAgentsStatus();
+        const execStatus = status.execution?.status;
+        if (execStatus === 'completed' || execStatus === 'failed') {
+          await refreshProposedMission();
+          await onRefresh?.();
+          if (!mountedRef.current) return;
+          if (execStatus === 'completed') {
+            toast.success('Résultat reçu — voir "Dernière exécution réelle".');
+          } else {
+            toast.error(status.execution?.error || 'Exécution échouée.');
+          }
+          setExecutionPolling(false);
+          return;
+        }
+      } catch {
+        // Best-effort — une erreur réseau ponctuelle ne doit pas arrêter le polling.
+      }
+    }
+    if (mountedRef.current) setExecutionPolling(false);
+  }, [onRefresh, refreshProposedMission]);
+
   const handleApprove = useCallback(async () => {
     if (approving) return;
     setApproving(true);
@@ -1813,22 +1849,28 @@ function VariantG({
       // vient d'obtenir n'apparaît nulle part avant le prochain cycle de
       // polling (jusqu'à 45s).
       await refreshProposedMission();
+      if (result.execution_status === 'running') {
+        void pollExecutionStatus();
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Validation Hermès impossible');
     } finally {
       setApproving(false);
     }
-  }, [approving, onRefresh, refreshProposedMission]);
+  }, [approving, onRefresh, refreshProposedMission, pollExecutionStatus]);
 
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
     try {
-      await onRefresh?.();
+      // Deux sources sont affichées dans G : le snapshot de l'accueil et la
+      // mission Hermès locale. Les relire ensemble évite une carte de résultat
+      // périmée après une délégation terminée.
+      await Promise.all([onRefresh?.(), refreshProposedMission()]);
     } finally {
       setRefreshing(false);
     }
-  }, [refreshing, onRefresh]);
+  }, [refreshing, onRefresh, refreshProposedMission]);
 
   if (detail === 'attente') return <PendingValidationsDetail snapshot={snapshot} onBack={onCloseDetail} />;
   if (detail === 'alertes') return <AlertesDetail snapshot={snapshot} onBack={onCloseDetail} />;
@@ -1898,6 +1940,12 @@ function VariantG({
               {approving ? 'Envoi…' : actionableValidation ? 'Approuver et envoyer' : 'Rien à approuver maintenant'}
               {!approving ? <ChevronRight size={15} /> : null}
             </button>
+            {executionPolling ? (
+              <p className="g-agent-result">
+                <Loader2 size={13} className="d-spin" style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                Mission envoyée — Hermès reste utilisable pendant que l'agent travaille, le résultat apparaîtra ici.
+              </p>
+            ) : null}
             {lastAgentInfo ? (
               <>
                 <p className={`g-agent-result${lastAgentInfo.fallback_used ? ' g-agent-result-fallback' : ''}`}>
@@ -1978,7 +2026,7 @@ function VariantG({
                 const when = lastExecution.resolved_at || lastExecution.executed_at;
                 return (
                   <div className="g-mission-card g-last-execution-card">
-                    <span className="g-mission-eyebrow g-mission-eyebrow-done">Dernière exécution réelle — preuve obtenue</span>
+                    <span className="g-mission-eyebrow g-mission-eyebrow-done">Dernier compte rendu d’agent — exécution prouvée</span>
                     {historyEntry ? (
                       <p className="g-mission-context">
                         Projet <strong>{historyEntry.project_id || '—'}</strong>
@@ -1990,6 +2038,9 @@ function VariantG({
                     ) : null}
                     <p className="g-mission-summary">
                       {cleanText(lastExecution.result_summary, 'Résultat enregistré, sans résumé détaillé.')}
+                    </p>
+                    <p className="g-mission-context">
+                      Les propositions du rapport ne sont pas des décisions Ruth : seule une validation enregistrée séparément fait foi.
                     </p>
                     <p className="g-mission-agent">
                       Exécuté par <strong>{agent}</strong>

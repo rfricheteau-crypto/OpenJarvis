@@ -331,6 +331,10 @@ export interface AgentsStatusResponse {
   agents: Array<{ agent: string; provider: string; available: boolean }>;
   current_agent: { requested_agent: string; executed_by: string; fallback_used: boolean; delegation_status: string; session_log_available: boolean };
   mission_in_progress: { active: boolean; request_summary: string | null; project_id: string | null };
+  // Délégation en tâche suivie (Codex, 2026-09-01) — "Approuver et envoyer"
+  // répond désormais tout de suite avec status="running" au lieu d'attendre
+  // toute la durée de l'agent ; ce champ sert au polling côté G.
+  execution?: { status: string; mission_request_id: string | null; summary: string | null; error: string | null; updated_at: string | null };
 }
 
 export async function fetchAgentsStatus(): Promise<AgentsStatusResponse> {
