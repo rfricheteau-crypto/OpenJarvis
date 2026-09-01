@@ -78,9 +78,9 @@ encore depuis une simple phrase, par choix de sûreté.
 
 - Correction Codex livrée : le classifieur connaît désormais `PEDRO` avant
   `JARVIS`, donc « Hermès, sur Pedro OS… » reste dans le domaine Pedro. Test
-  de régression ajouté et suite orchestrator+approval : **15/15**. Le serveur
-  live doit être rechargé par Claude (propriétaire du serveur/UI) avant le
-  prochain test chat réel.
+  de régression ajouté et suite orchestrator+approval : **15/15**. Serveur
+  live rechargé et contre-test HTTP réel : `GET /health` 200 en 0,010 s ;
+  même phrase chat → `classified_domain: PEDRO`.
 - Corriger l'ordre et le statut final du cycle de validation.
 - Contre-tester une seconde mission lecture seule après le correctif UI
   Claude pour vérifier l'affichage de l'agent et le transcript de session.
@@ -98,8 +98,8 @@ encore depuis une simple phrase, par choix de sûreté.
 
 ## Prochaine action recommandée
 
-Claude corrige l'état final de validation ; après son reload serveur, Codex
-contre-teste une phrase Pedro réelle et le retour affiché dans G.
+Claude corrige l'état final de validation ; Codex contre-testera ensuite son
+retour visible dans G avec une nouvelle mission lecture seule.
 
 ## Validation Ruth attendue
 

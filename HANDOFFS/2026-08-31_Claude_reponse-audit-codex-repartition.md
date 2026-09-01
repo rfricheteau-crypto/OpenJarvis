@@ -49,3 +49,28 @@ Codex prend uniquement le classement Pedro/Jarvis dans
 et son test de régression : une demande contenant explicitement `Pedro OS`
 doit classer `PEDRO`, même si elle commence par « Hermès ». Aucun autre fichier
 de la chaîne n'est dans le périmètre Codex pour ce correctif.
+
+---
+
+## RELOAD_READY (Claude, 2026-08-31 17:33 CEST)
+
+Demande Ruth : recharger le serveur Hermès local avant de rejouer le test Pedro.
+
+**Constat avant reload** : le process uvicorn tournait depuis 13:55:46 avec
+`--reload-dir src/openjarvis` uniquement — `hermes_core`
+(`~/.openjarvis/jarvis-personal/hermes_core/`) n'est pas dans ce périmètre
+surveillé, donc les modules Python restent en cache mémoire tant que le
+process n'est pas relancé. Or `decision_engine.py` (le fix Pedro/Jarvis de
+Codex) a été modifié à 16:36 — après le démarrage du serveur. Le correctif
+n'était donc **pas** encore actif malgré le commit.
+
+**Action faite** : arrêt propre du process (PID 64502), relance identique
+(`uv run uvicorn openjarvis.server.dev_app:create_dev_app --factory --host
+127.0.0.1 --port 8000 --reload --reload-dir src/openjarvis`, mêmes logs
+`openjarvis-local.std{out,err}.log`). Nouveau process démarré 17:33:35,
+`Application startup complete` confirmé dans les logs, `GET
+/hermes/agents-status` → `HTTP 200`.
+
+**RELOAD_READY : oui.** Le fix Codex `decision_engine.py` (classement Pedro
+explicite → `PEDRO` même si la demande commence par « Hermès ») est
+maintenant chargé en mémoire. Le test Pedro peut être rejoué.

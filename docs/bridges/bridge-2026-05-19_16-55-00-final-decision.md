@@ -129,3 +129,54 @@ Résultat observé :
 - une seule voix
 - ressenti meilleur qu’avant les derniers réglages
 
+---
+
+## Mise à jour Codex — 2026-05-30 fermeture terminal
+
+### Décision toujours active
+
+La voix officielle reste :
+
+- `http://127.0.0.1:8790/web/`
+- code source : `prototypes/hermes-webrtc-poc-v2/`
+
+### Intégration UI ajoutée
+
+Commit Jarvis :
+
+- `011d912 feat(ui): link Jarvis personal page to validated voice v2`
+
+Fichier modifié :
+
+- `frontend/src/pages/JarvisPersonalPage.tsx`
+
+Effet :
+
+- ajout d’un encart **Voix recommandee**
+- ajout d’un bouton **Ouvrir Voix V2**
+- arrêt de la capture micro locale avant ouverture de V2
+- arrêt de la lecture/parole locale avant ouverture de V2
+- aucun retour à l’ancien pipeline voix navigateur comme base officielle
+
+### État Git au moment de la passation
+
+- branche locale : `main`
+- état : `main...origin/main [ahead 23]`
+- non poussé
+- fichiers non trackés laissés volontairement hors commit :
+  - `docs/agents/`
+  - plusieurs fichiers `docs/bridges/bridge-2026-05-19_*`
+
+### Test à faire à la reprise
+
+1. Ouvrir `/jarvis-personal`.
+2. Cliquer **Ouvrir Voix V2**.
+3. Vérifier que `http://127.0.0.1:8790/web/` s’ouvre.
+4. Vérifier que l’ancienne page ne garde pas une capture micro ou une parole active en parallèle.
+
+### Ne pas faire sans validation Ruth
+
+- pousser les 23 commits locaux
+- supprimer ou classer les bridges non trackés
+- relancer un refactor profond de la voix dans `JarvisPersonalPage.tsx`
+- réactiver le pipeline navigateur comme moteur voix principal
