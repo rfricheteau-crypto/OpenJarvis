@@ -83,7 +83,8 @@ Test mobile réel (Playwright, viewport iPhone 390×844, 2026-08-29) : aucun scr
 
 **OBJECTIF** : les 4 tuiles du Home mènent vers une vraie liste (format court, un item = une ligne), pas nulle part.
 
-**STATUT GLOBAL** : `IN_PROGRESS`
+**STATUT GLOBAL** : `TESTED` — Projets/Alertes/En attente testés réellement ;
+Personnel reste `NOT_STARTED` (aucune source de données).
 
 **CE QUI EXISTE** :
 - « En attente » (Codex) : liste des décisions non terminées avec projet, contexte, priorité et action attendue.
@@ -204,6 +205,25 @@ quand publié) — pas de réduction à Pedro seul. Rien n'est inventé dans le
 registre actuel (vraies infos, juste pas via ce pipeline précis) ; le
 réduire maintenant serait une perte d'utilité sans bénéfice de sécurité
 réel. Écart du contre-audit noté comme assumé, pas à corriger.
+
+**Project State 360° publié (Codex, 2026-09-01)** : les 10 projets ont
+désormais un snapshot réel sous `CORE/project-state/snapshots/`, chacun
+honnêtement marqué `current`/`stale`/`unknown` (fraîcheur) et
+`active`/`paused`/`dormant` (lifecycle) — plus seulement Pedro. Contre-revue
+Claude faite en direct sur l'endpoint : 10 projets, 0 warning, résumés
+spécifiques par projet, rien d'inventé (voir `CODEX_RUTH_OS/AGENT_HANDOFF.md`).
+
+**DÉCISION RUTH (2026-09-01, revenue sur la précédente)** : **"LES VRAIS
+ETATS"**. Le problème qui justifiait le refus initial (perte d'info pour
+9 projets sur 10) n'existe plus, les 10 ayant maintenant un état réel.
+"Projets" consomme désormais `/v1/personal-cockpit/project-state` en
+priorité (résumé réel + libellé fraîcheur/lifecycle, ex. "Actif · à
+jour"), avec la tagline statique en repli seulement si un projet n'a pas
+(encore) de snapshot. Testé réellement (Playwright), commit `6812995`.
+
+**STATUT GLOBAL** → `TESTED` pour "Projets"/"Alertes"/"En attente" ;
+"Personnel" reste sans source (voir plus haut, hors périmètre tant
+qu'aucune source n'existe).
 
 ---
 
