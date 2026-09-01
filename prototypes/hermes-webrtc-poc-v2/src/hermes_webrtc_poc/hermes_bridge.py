@@ -8,6 +8,14 @@ import httpx
 from .config import CONFIG
 from .models import HermesProxyRequest
 
+KOKORO_MIN_SPEED = 0.85
+KOKORO_MAX_SPEED = 1.25
+
+
+def _safe_kokoro_speed(speed: float) -> float:
+    """Keep a voice turn valid even if a caller supplies an unsafe speed."""
+    return min(KOKORO_MAX_SPEED, max(KOKORO_MIN_SPEED, float(speed)))
+
 
 class HermesBridge:
     def __init__(self) -> None:
@@ -42,7 +50,7 @@ class HermesBridge:
             return response.json()
 
     async def speak_kokoro(self, text: str, speed: float = 1.08) -> tuple[dict[str, Any], bytes]:
-        payload = {'text': text, 'engine': 'kokoro', 'speed': speed}
+        payload = {'text': text, 'engine': 'kokoro', 'speed': _safe_kokoro_speed(speed)}
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(f'{CONFIG.hermes_base_url}/api/voice/speak', json=payload)
             response.raise_for_status()

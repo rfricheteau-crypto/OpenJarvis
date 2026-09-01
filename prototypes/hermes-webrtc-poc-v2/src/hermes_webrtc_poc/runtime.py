@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import hashlib
+import json
 import re
 import time
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -35,27 +39,66 @@ from .config import CONFIG
 from .hermes_bridge import HermesBridge
 from .models import ChatTurn, HermesProxyRequest
 
+VOICE_DIAGNOSTICS_PATH = (
+    Path.home() / '.openjarvis' / 'jarvis-personal' / 'runtime' / 'hermes' / 'voice_v2_diagnostics.jsonl'
+)
+_DIAGNOSTIC_REDACTED_KEYS = frozenset({
+    'text', 'transcript', 'message', 'reply', 'spoken_text', 'spoken_preview',
+    'audio_url', 'sdp',
+})
+
+
+def _redact_diagnostic_payload(value: Any, *, key: str | None = None) -> Any:
+    """Preserve timing/debug shape without retaining Ruth's conversation."""
+    if key in _DIAGNOSTIC_REDACTED_KEYS and isinstance(value, str):
+        return {'redacted': True, 'chars': len(value)}
+    if isinstance(value, dict):
+        return {str(item_key): _redact_diagnostic_payload(item_value, key=str(item_key)) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        return [_redact_diagnostic_payload(item) for item in value]
+    return value
+
+
+def _write_voice_diagnostic(session_id: str, kind: str, payload: dict[str, Any]) -> None:
+    """Append local, privacy-preserving runtime evidence; never fail a voice turn."""
+    try:
+        VOICE_DIAGNOSTICS_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        row = {
+            'ts': datetime.now(timezone.utc).isoformat(),
+            'session': hashlib.sha256(session_id.encode('utf-8')).hexdigest()[:12],
+            'kind': kind,
+            'payload': _redact_diagnostic_payload(payload),
+        }
+        is_new = not VOICE_DIAGNOSTICS_PATH.exists()
+        with VOICE_DIAGNOSTICS_PATH.open('a', encoding='utf-8') as handle:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n')
+        if is_new:
+            VOICE_DIAGNOSTICS_PATH.chmod(0o600)
+    except OSError as exc:
+        logger.warning('Voice diagnostics write skipped: {}', exc)
+
 HOME_GREETING = "Bonjour Ruth, qu’est-ce qu’on fait aujourd’hui ?"
-SPOKEN_REPLY_MAX_CHARS = 260
-SPOKEN_LIST_REPLY_MAX_CHARS = 420
-SPOKEN_REPLY_MAX_SENTENCES = 3
-SPOKEN_REPLY_MIN_CHARS = 60
-TTS_SPEED = 1.14
-POST_SPEAK_COOLDOWN_SECONDS = 0.75
+# Voice is a conversation, but spoken and written content must remain aligned.
+# The local voice API enforces 1.25 as the safe maximum.  Keep this value in
+# contract rather than failing a whole conversational turn with HTTP 422.
+TTS_SPEED = 1.25
+# Echo protection remains enforced independently by the longer transcript
+# guard below; this only shortens the visible pause before listening resumes.
+POST_SPEAK_COOLDOWN_SECONDS = 0.40
 BARGE_IN_ECHO_MAX_DURATION_SECONDS = 1.2
-BARGE_IN_AUDIO_SETTLE_SECONDS = 0.18
+BARGE_IN_AUDIO_SETTLE_SECONDS = 0.35
 BARGE_IN_TRANSCRIPT_GUARD_MS = 1400
 BARGE_IN_ACCEPT_AFTER_AUDIO_END_MS = 700
 BARGE_IN_SHORT_TRANSCRIPT_MAX_CHARS = 12
 BARGE_IN_SHORT_TRANSCRIPT_MAX_TOKENS = 2
 MIN_CAPTURED_AUDIO_SECONDS = 0.28
 CAPTURE_PREROLL_SECONDS = 0.32
-BARGE_IN_INTERRUPT_HINT = (
-    "Interruption utilisateur prioritaire. "
-    "Si Ruth coupe la voix, privilégier les mots courts réellement prononcés: "
-    "non, attends, stop, coupe, chut, tais-toi, non attends. "
-    "Ne pas recopier la phrase précédemment dite par l'assistant."
-)
+# Barge-in must react to a short spoken interruption. Browser echo
+# cancellation remains enabled, so use a faster server-side safety net too.
+VAD_CONFIDENCE = 0.45
+VAD_SPEECH_START_SECONDS = 0.04
+VAD_SPEECH_STOP_SECONDS = 0.28
+VAD_MIN_VOLUME = 0.10
 TRANSCRIPT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     (r"\bhermes\b", "Hermès"),
     (r"\bjarvis\b", "Jarvis"),
@@ -118,61 +161,18 @@ def _normalize_transcript(text: str) -> str:
     normalized = re.sub(r"(?i)^c['’]est-ce que", "Qu'est-ce que", normalized)
     normalized = re.sub(r"(?i)^c['’]est qu['’]", "Qu'est-ce qu'", normalized)
     normalized = re.sub(r"\s+([?.!,;:])", r"\1", normalized)
+    # Whisper can hear the product term “prochain bloc Pedro” as “prochain
+    # blog Pedro”.  Correct only this unambiguous project-planning phrasing;
+    # a real sentence about a blog remains untouched.
+    normalized = re.sub(
+        r"(?i)\b(prochain|prochaine)\s+blog(\s+(?:de|du|pour))?\s+(Pedro)\b",
+        r"\1 bloc\2 \3",
+        normalized,
+    )
     return normalized.strip()
 
 
 def _compact_reply_for_voice(text: str) -> str:
-    def strip_greeting_prefix(sentence: str) -> str:
-        lowered = _ascii_fold(sentence)
-        prefixes = (
-            "bonjour ruth",
-            "salut ruth",
-            "coucou ruth",
-            "bonjour",
-            "salut",
-            "coucou",
-        )
-        for prefix in prefixes:
-            if lowered.startswith(prefix):
-                remainder = sentence[len(prefix):].lstrip(" ,:;!-")
-                return remainder or sentence
-        return sentence
-
-    def ensure_sentence(text_value: str) -> str:
-        value = text_value.strip()
-        if not value:
-            return value
-        if value.endswith((':', ';', ',', '-', '1.', '2.', '3.')):
-            return value.rstrip(' :;,-1234567890.') + '.'
-        if value[-1] not in '.!?':
-            return f'{value}.'
-        return value
-
-    def trim_voice_text(text_value: str, *, max_chars: int = SPOKEN_REPLY_MAX_CHARS) -> str:
-        value = text_value.strip()
-        if len(value) <= max_chars:
-            return ensure_sentence(value)
-
-        boundaries = [
-            match.end()
-            for match in re.finditer(r'(?<!\d)[.!?](?:\s|$)', value)
-        ]
-        before_limit = [pos for pos in boundaries if SPOKEN_REPLY_MIN_CHARS <= pos <= max_chars]
-        if before_limit:
-            return ensure_sentence(value[: before_limit[-1]].strip())
-
-        after_limit = [
-            pos for pos in boundaries
-            if max_chars < pos <= max_chars + 160
-        ]
-        if after_limit:
-            return ensure_sentence(value[: after_limit[0]].strip())
-
-        truncated = value[:max_chars].rsplit(" ", 1)[0].strip()
-        if not truncated:
-            truncated = value[:max_chars].strip()
-        return ensure_sentence(truncated)
-
     cleaned = text.strip()
     if not cleaned:
         return "Je suis prête pour la suite."
@@ -182,49 +182,35 @@ def _compact_reply_for_voice(text: str) -> str:
     cleaned = re.sub(r'[ \t]+', ' ', cleaned)
     cleaned = re.sub(r'\n{2,}', '\n', cleaned).strip()
 
-    list_matches = list(re.finditer(r'(?:(?<=^)|(?<=\n)|(?<=\s))(\d+)\.\s+', cleaned))
-    if list_matches:
-        preface = cleaned[: list_matches[0].start()].strip(" \n:;-")
-        items: list[str] = []
-        for index, match in enumerate(list_matches):
-            end = list_matches[index + 1].start() if index + 1 < len(list_matches) else len(cleaned)
-            item_text = cleaned[match.end():end].strip(" \n;,-")
-            if item_text:
-                items.append(item_text)
-        if items:
-            labels = ('Premier point', 'Deuxième point', 'Troisième point')
-            spoken_parts: list[str] = []
-            stripped_preface = strip_greeting_prefix(preface) if preface else ''
-            if stripped_preface:
-                spoken_parts.append(ensure_sentence(stripped_preface))
-            for idx, item in enumerate(items[:3]):
-                label = labels[idx] if idx < len(labels) else f'Point {idx + 1}'
-                spoken_parts.append(f'{label} : {ensure_sentence(item)}')
-            spoken_text = " ".join(part.strip() for part in spoken_parts if part.strip())
-            if spoken_text:
-                return trim_voice_text(spoken_text, max_chars=SPOKEN_LIST_REPLY_MAX_CHARS)
+    # The spoken answer must retain the same information as the written
+    # answer.  Latency must be solved in the audio pipeline, never by silently
+    # dropping the next action or the proof shown to Ruth.
+    return cleaned
 
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    sentences = [part.strip() for part in re.split(r'(?<!\d)(?<=[.!?])\s+', cleaned) if part.strip()]
-    if not sentences:
-        return cleaned
 
-    first = strip_greeting_prefix(sentences[0])
-    selected_parts: list[str] = []
-    if first and len(first) >= SPOKEN_REPLY_MIN_CHARS:
-        selected_parts.append(first)
-
-    for sentence in sentences[1:] if selected_parts else sentences[1:] or sentences:
-        if len(selected_parts) >= SPOKEN_REPLY_MAX_SENTENCES:
+def _split_tts_chunks(text: str, *, target_chars: int = 72) -> list[str]:
+    """Split long speech at natural boundaries without dropping any words."""
+    value = " ".join(text.split()).strip()
+    if not value:
+        return []
+    chunks: list[str] = []
+    remaining = value
+    while len(remaining) > target_chars:
+        boundary = -1
+        for delimiter in (" — ", "; ", ", ", " "):
+            candidate = remaining.rfind(delimiter, 0, target_chars + 1)
+            if candidate > boundary:
+                boundary = candidate + len(delimiter)
+        if boundary <= 0:
+            boundary = target_chars
+        chunk = remaining[:boundary].strip()
+        if not chunk:
             break
-        candidate = sentence if selected_parts else strip_greeting_prefix(sentence)
-        if candidate:
-            selected_parts.append(candidate)
-        if sum(len(part) for part in selected_parts) >= SPOKEN_REPLY_MIN_CHARS:
-            break
-
-    selected = " ".join(selected_parts).strip() or cleaned
-    return trim_voice_text(selected)
+        chunks.append(chunk)
+        remaining = remaining[boundary:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def _detect_local_command(text: str) -> str | None:
@@ -303,6 +289,16 @@ def _detect_fast_reply(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _is_interruption_only(text: str) -> bool:
+    """An interruption command must silence the assistant, not become a chat turn."""
+    folded = " ".join(_tokenize_command_text(text))
+    return folded in {
+        'stop', 'stop hermes', 'arrete', 'arrete hermes', 'attends',
+        'non attends', 'coupe', 'chut', 'tais toi', 'tais toi hermes',
+        'stop je t interromps', 'je t interromps',
+    }
+
+
 @dataclass
 class VoiceTurnMetrics:
     turn_id: str
@@ -353,13 +349,7 @@ class HermesVoiceProcessor(FrameProcessor):
             await self._set_state('LISTENING_ARMED', detail='Session WebRTC prête')
         elif isinstance(frame, VADUserStartedSpeakingFrame):
             if self._speaking or self._phase in {'SPEAKING', 'COOLDOWN'}:
-                await self._emit_event(
-                    'speech_ignored_during_output',
-                    {
-                        'phase': self._phase,
-                        'elapsed_ms_since_audio_play_end': self._elapsed_ms_since_audio_play_end(),
-                    },
-                )
+                await self._begin_barge_in('assistant_busy')
             elif self._is_within_post_tts_guard_window():
                 await self._emit_event(
                     'speech_ignored_post_tts_guard',
@@ -418,19 +408,11 @@ class HermesVoiceProcessor(FrameProcessor):
     async def greet(self) -> None:
         if self._history:
             return
-        self._history.append(ChatTurn(role='assistant', content=HOME_GREETING))
+        # A spoken greeting makes the very first user sentence look like a
+        # barge-in.  Start in listening mode instead: the UI already shows the
+        # welcome message and Ruth can speak immediately.
         await self._emit_message('assistant', HOME_GREETING)
-        self._speaking = True
-        await self._set_state('SPEAKING', detail='Hermès parle')
-        try:
-            speak_data, wav_bytes = await self._bridge.speak_kokoro(HOME_GREETING, speed=TTS_SPEED)
-            await self._emit_event('tts_request_done', {'engine': speak_data.get('engine_used'), 'elapsed_ms': speak_data.get('elapsed_ms')})
-            await self._play_tts_audio(wav_bytes)
-        finally:
-            self._speaking = False
-            await self._set_state('COOLDOWN', detail='Anti-écho')
-            await asyncio.sleep(POST_SPEAK_COOLDOWN_SECONDS)
-            await self._set_state('LISTENING_AGAIN', detail='Écoute relancée')
+        await self._set_state('LISTENING_AGAIN', detail='Je t’écoute.')
 
     async def _handle_turn(self, captured_audio: bytes, sample_rate: int, channels: int, turn: VoiceTurnMetrics | None) -> None:
         try:
@@ -453,15 +435,26 @@ class HermesVoiceProcessor(FrameProcessor):
                 )
                 await self._set_state('LISTENING_AGAIN', detail='Capture trop courte, reparle.')
                 return
+            if self._should_silence_short_barge_capture(captured_audio_seconds, turn=turn):
+                # This is the short sound immediately following an
+                # interruption (usually “stop”, or residual speaker echo).
+                # It must never be promoted to an unrelated chat request.
+                await self._emit_event(
+                    'barge_in_short_capture_silenced',
+                    {
+                        'turn_id': turn.turn_id if turn else None,
+                        'captured_audio_seconds': captured_audio_seconds,
+                        'speech_started_audio_gap_ms': turn.speech_started_audio_gap_ms if turn else None,
+                    },
+                )
+                await self._set_state('LISTENING_AGAIN', detail='Je t’écoute.')
+                return
             await self._set_state('TRANSCRIBING', detail='Transcription en cours')
             wav_bytes = pcm_to_wav_bytes(captured_audio, sample_rate, channels)
-            prompt = CONFIG.speech_prompt
-            if turn and turn.barge_in_reason == 'assistant_busy':
-                prompt = f"{prompt} {BARGE_IN_INTERRUPT_HINT}"
             stt_data = await self._bridge.transcribe_wav(
                 wav_bytes,
                 language=CONFIG.speech_language,
-                prompt=prompt,
+                prompt=CONFIG.speech_prompt,
             )
             transcript = _normalize_transcript(str(stt_data.get('text') or '').strip())
             confidence = stt_data.get('confidence')
@@ -478,6 +471,13 @@ class HermesVoiceProcessor(FrameProcessor):
             })
             if not transcript:
                 await self._set_state('LISTENING_AGAIN', detail='Aucune parole comprise')
+                return
+            if turn and turn.barge_in_reason == 'assistant_busy' and _is_interruption_only(transcript):
+                await self._emit_event(
+                    'barge_in_command_acknowledged',
+                    {'turn_id': turn.turn_id, 'command': 'interrupt_only'},
+                )
+                await self._set_state('LISTENING_AGAIN', detail='Je t’écoute.')
                 return
             echo_match = self._detect_barge_in_echo(
                 transcript,
@@ -573,16 +573,7 @@ class HermesVoiceProcessor(FrameProcessor):
                 )
             self._speaking = True
             await self._set_state('SPEAKING', detail='Hermès parle')
-            speak_data, reply_wav = await self._bridge.speak_kokoro(spoken_reply, speed=TTS_SPEED)
-            if turn:
-                turn.tts_done_ms = int((time.perf_counter() - turn.started_at) * 1000)
-            await self._emit_event('tts_request_done', {
-                'turn_id': turn.turn_id if turn else None,
-                'engine': speak_data.get('engine_used'),
-                'elapsed_ms': speak_data.get('elapsed_ms'),
-                'speed': speak_data.get('speed'),
-            })
-            await self._play_tts_audio(reply_wav, turn=turn)
+            await self._speak_reply_progressively(spoken_reply, turn=turn)
             self._speaking = False
             await self._set_state('COOLDOWN', detail='Anti-écho')
             await asyncio.sleep(POST_SPEAK_COOLDOWN_SECONDS)
@@ -592,9 +583,12 @@ class HermesVoiceProcessor(FrameProcessor):
             await self._emit_event('assistant_turn_cancelled', {'turn_id': turn.turn_id if turn else None})
             raise
         except Exception as exc:
-            logger.exception('Hermès WebRTC turn failed')
+            # Do not log rich trace locals: they may contain a private
+            # transcript or assistant reply.  Diagnostics retain only the
+            # stable error class and timings.
+            logger.error('Hermès WebRTC turn failed: {}', type(exc).__name__)
             self._speaking = False
-            await self._emit_event('error', {'message': str(exc)})
+            await self._emit_event('error', {'code': 'voice_turn_failed', 'error_type': type(exc).__name__})
             await self._set_state('LISTENING_AGAIN', detail='Erreur de tour, écoute relancée')
         finally:
             self._processing = False
@@ -619,7 +613,10 @@ class HermesVoiceProcessor(FrameProcessor):
         *,
         turn: VoiceTurnMetrics | None = None,
     ) -> bool:
-        elapsed_ms = turn.speech_started_audio_gap_ms if turn and turn.speech_started_audio_gap_ms is not None else self._elapsed_ms_since_audio_play_end()
+        # The old implementation kept the gap measured when the microphone
+        # opened.  A user who started speaking at 0 ms was consequently still
+        # ignored several seconds later, after transcription had finished.
+        elapsed_ms = self._elapsed_ms_since_audio_play_end()
         if elapsed_ms is None or elapsed_ms > BARGE_IN_TRANSCRIPT_GUARD_MS:
             return False
         if elapsed_ms < BARGE_IN_ACCEPT_AFTER_AUDIO_END_MS:
@@ -635,7 +632,7 @@ class HermesVoiceProcessor(FrameProcessor):
         return False
 
     def _transcription_ignore_reason(self, transcript: str, *, turn: VoiceTurnMetrics | None = None) -> str:
-        elapsed_ms = turn.speech_started_audio_gap_ms if turn and turn.speech_started_audio_gap_ms is not None else self._elapsed_ms_since_audio_play_end()
+        elapsed_ms = self._elapsed_ms_since_audio_play_end()
         if elapsed_ms is not None and elapsed_ms < BARGE_IN_ACCEPT_AFTER_AUDIO_END_MS:
             return 'post_tts_guard_window'
         tokens = _tokenize_command_text(transcript)
@@ -644,6 +641,27 @@ class HermesVoiceProcessor(FrameProcessor):
         if len(tokens) <= BARGE_IN_SHORT_TRANSCRIPT_MAX_TOKENS:
             return 'post_tts_short_tokens'
         return 'post_tts_filtered'
+
+    def _should_silence_short_barge_capture(
+        self,
+        captured_audio_seconds: float | None,
+        *,
+        turn: VoiceTurnMetrics | None,
+    ) -> bool:
+        """Treat an immediate, short barge-in capture as an interruption.
+
+        This intentionally does not ask the language model to interpret
+        "stop".  Once audio is cut, Hermès listens again for the next request.
+        A longer utterance remains a normal new turn.
+        """
+        if not turn or turn.barge_in_reason != 'assistant_busy':
+            return False
+        if captured_audio_seconds is None or captured_audio_seconds > BARGE_IN_ECHO_MAX_DURATION_SECONDS:
+            return False
+        return (
+            turn.speech_started_audio_gap_ms is not None
+            and turn.speech_started_audio_gap_ms < BARGE_IN_ACCEPT_AFTER_AUDIO_END_MS
+        )
 
     async def cancel_assistant_task(self) -> None:
         task = self._assistant_task
@@ -738,6 +756,9 @@ class HermesVoiceProcessor(FrameProcessor):
         await self.cancel_assistant_task()
         self._processing = False
         self._speaking = False
+        # Treat interruption as the end of assistant audio even when the
+        # underlying transport cannot drain its private output queue.
+        self._last_audio_play_end_at = time.perf_counter()
         await self._start_capture(barge_in_reason=reason)
 
     async def _set_state(self, state: str, detail: str | None = None) -> None:
@@ -842,6 +863,7 @@ class HermesVoiceProcessor(FrameProcessor):
         *,
         turn: VoiceTurnMetrics | None = None,
         command: str | None = None,
+        is_final_chunk: bool = True,
     ) -> None:
         payload: dict[str, Any] = {'engine': 'kokoro'}
         if turn:
@@ -860,12 +882,61 @@ class HermesVoiceProcessor(FrameProcessor):
         remaining = max(0.0, wav_duration_seconds(wav_bytes) - (time.perf_counter() - playback_started))
         if remaining:
             await asyncio.sleep(remaining)
-        if turn:
-            turn.audio_play_end_ms = int((time.perf_counter() - turn.started_at) * 1000)
-        self._last_audio_play_end_at = time.perf_counter()
+        if is_final_chunk:
+            if turn:
+                turn.audio_play_end_ms = int((time.perf_counter() - turn.started_at) * 1000)
+            self._last_audio_play_end_at = time.perf_counter()
         await self._emit_event('audio_play_end', payload)
 
+    async def _speak_reply_progressively(self, reply: str, *, turn: VoiceTurnMetrics | None) -> None:
+        """Begin playback after the first chunk while the next one is synthesised.
+
+        Every chunk is spoken in order; the optimisation only overlaps
+        synthesis with playback, it never shortens the written answer.
+        """
+        chunks = _split_tts_chunks(reply)
+        if not chunks:
+            return
+        synthesis_task: asyncio.Task[tuple[dict[str, Any], bytes]] | None = None
+        try:
+            synthesis_task = asyncio.create_task(
+                self._bridge.speak_kokoro(chunks[0], speed=TTS_SPEED),
+                name=f'hermes-tts-{self._session_id}-0',
+            )
+            for index, _chunk in enumerate(chunks):
+                speak_data, wav_bytes = await synthesis_task
+                if turn and index == 0:
+                    turn.tts_done_ms = int((time.perf_counter() - turn.started_at) * 1000)
+                if index + 1 < len(chunks):
+                    synthesis_task = asyncio.create_task(
+                        self._bridge.speak_kokoro(chunks[index + 1], speed=TTS_SPEED),
+                        name=f'hermes-tts-{self._session_id}-{index + 1}',
+                    )
+                else:
+                    synthesis_task = None
+                await self._emit_event('tts_request_done', {
+                    'turn_id': turn.turn_id if turn else None,
+                    'engine': speak_data.get('engine_used'),
+                    'elapsed_ms': speak_data.get('elapsed_ms'),
+                    'speed': speak_data.get('speed'),
+                    'chunk_index': index + 1,
+                    'chunk_count': len(chunks),
+                })
+                await self._play_tts_audio(
+                    wav_bytes,
+                    turn=turn,
+                    is_final_chunk=index == len(chunks) - 1,
+                )
+        finally:
+            if synthesis_task and not synthesis_task.done():
+                synthesis_task.cancel()
+                try:
+                    await synthesis_task
+                except asyncio.CancelledError:
+                    pass
+
     async def _emit_state(self, state: str, detail: str | None = None) -> None:
+        _write_voice_diagnostic(self._session_id, 'state', {'state': state, 'detail': detail})
         await self.push_frame(
             OutputTransportMessageUrgentFrame(
                 message={
@@ -880,6 +951,11 @@ class HermesVoiceProcessor(FrameProcessor):
         )
 
     async def _emit_message(self, role: str, text: str, confidence: float | None = None) -> None:
+        _write_voice_diagnostic(
+            self._session_id,
+            'message',
+            {'role': role, 'text': text, 'confidence': confidence},
+        )
         await self.push_frame(
             OutputTransportMessageUrgentFrame(
                 message={
@@ -895,6 +971,7 @@ class HermesVoiceProcessor(FrameProcessor):
         )
 
     async def _emit_event(self, name: str, payload: dict[str, Any]) -> None:
+        _write_voice_diagnostic(self._session_id, 'event', {'name': name, 'payload': payload})
         await self.push_frame(
             OutputTransportMessageUrgentFrame(
                 message={
@@ -930,7 +1007,12 @@ class HermesWebRTCSession:
         self.vad = VADProcessor(
             vad_analyzer=SileroVADAnalyzer(
                 sample_rate=16000,
-                params=VADParams(confidence=0.52, start_secs=0.08, stop_secs=0.34, min_volume=0.18),
+                params=VADParams(
+                    confidence=VAD_CONFIDENCE,
+                    start_secs=VAD_SPEECH_START_SECONDS,
+                    stop_secs=VAD_SPEECH_STOP_SECONDS,
+                    min_volume=VAD_MIN_VOLUME,
+                ),
             )
         )
         self.processor = HermesVoiceProcessor(

@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -13,6 +14,14 @@ from .config import CONFIG
 from .runtime import HermesWebRTCSession
 
 app = FastAPI(title='Hermès WebRTC POC — V2 Experimental', version='0.1.0')
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(CONFIG.allowed_origins),
+    allow_credentials=False,
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['Content-Type'],
+    max_age=600,
+)
 WEB_DIR = Path(__file__).resolve().parents[2] / 'web'
 app.mount('/web', StaticFiles(directory=WEB_DIR, html=True), name='web')
 
@@ -48,6 +57,7 @@ async def health() -> dict[str, object]:
         'active_sessions': active_sessions,
         'web_ui': '/web/',
         'webrtc_offer_url': '/api/offer',
+        'allowed_origins': list(CONFIG.allowed_origins),
     }
 
 
