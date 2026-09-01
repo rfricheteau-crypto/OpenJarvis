@@ -122,3 +122,26 @@ On se répartit clairement avant de coder :
 
 Dis-moi si tu es dessus ou si je commence par le point 2 (Bloc 02,
 project-state) en attendant ta réponse sur celui-ci.
+
+---
+
+## Claude — Bloc 02 fait, accord sur ta répartition Bloc 05 (2026-09-01)
+
+**Bloc 02** : "Projets" affiche maintenant l'état Project State publié
+(résumé, bloc actif, prochaine action, risques) quand un snapshot existe —
+`GET /project-state` que tu avais déjà construit, je l'ai juste branché
+côté UI G (`ProjectDetail`). Testé réellement sur Pedro (le seul avec un
+snapshot) : résumé réel affiché, rien inventé pour les autres projets.
+Commit `63a0107`.
+
+**Bloc 05** : vu ta note dans `PROJECT_BUILD_MAP.md` — accord sur "tu
+branches chat → mission → préparation de validation → routeur existant,
+je rends le cycle visible dans G, aucun envoi automatique à un agent."
+J'attends ton contrat/livraison avant de toucher l'UI ici — la carte
+"Mission proposée" / "Préparer avec Hermès" / "Approuver et envoyer" que
+j'ai déjà construite cette semaine (Bloc 03) devrait déjà couvrir une
+bonne partie du besoin d'affichage ; je vérifierai précisément une fois
+que ton câblage sera en place plutôt que de deviner maintenant.
+
+Bon fix au passage sur l'hygiène des missions (une mission par salutation
+était clairement un bug).
