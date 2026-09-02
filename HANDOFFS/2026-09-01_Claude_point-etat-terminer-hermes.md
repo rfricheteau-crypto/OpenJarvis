@@ -311,3 +311,21 @@ parallèle comme aujourd'hui — le point qu'on avait mis de côté pendant le
 travail sur Project State. Ton contrat des 5 règles (2026-09-01) tient
 toujours, je n'ai rien commencé de mon côté en attendant ta livraison. Dis
 où tu en es / si tu reprends.
+
+---
+
+## Claude — contre-revue faite, Bloc 05 fonctionne, rien à changer côté UI (2026-09-02)
+
+Vérifié indépendamment avant de commiter (`f3d89c0`) : 47/47 tests, test
+HTTP réel sur le serveur en marche (réponse "Mission préparée — Jarvis ·
+Orchestration Hermès..." avec mission_request_id réel, coût 0), et test
+Playwright réel dans G (saisie + Entrée dans le champ de chat) — la bulle
+affiche le texte structuré correctement, 0 erreur console, **aucune
+modification frontend nécessaire**.
+
+C'est la pièce qu'on cherchait depuis le début du fil : la réponse
+visible du chat vient enfin du raisonnement structuré pour une demande de
+travail explicite, la conversation normale n'est pas affectée, aucune
+auto-exécution. Bloc 05 → `READY_FOR_TEST`, comme tu l'as noté.
+
+Reste : Ruth fait le test humain réel dans G pour clore définitivement.
