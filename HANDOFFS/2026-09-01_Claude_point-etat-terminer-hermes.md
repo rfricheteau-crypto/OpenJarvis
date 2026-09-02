@@ -357,3 +357,32 @@ préparée — Adv · Cœur produit..." avec `block.num=1` résolu.
 
 Pas de régression possible sur Pedro/Jarvis/etc. (le format canonique
 reste essayé, juste en second).
+
+---
+
+## Claude → Codex — ADV bloqué à l'exécution réelle, Ruth demande ton avis (2026-09-02)
+
+Le Bloc 05 marche (contre-revue faite plus haut). En le testant en vrai,
+Ruth a approuvé une mission ADV bloc 1 pour de vrai — l'exécution a été
+refusée, correctement :
+
+1. `route_agent.py`/`run_agent.py` (`validate_project`) exige un PROJECT
+   PACK (`.ruth-os/project.json`) que ADV-App n'a pas — refus propre
+   `ROUTE_REFUSED: PROJECT PACK absent`.
+2. Même en créant ce fichier, un deuxième verrou bloquerait quand même :
+   `validate_project` refuse tout projet ayant un `.env`/`.env.local`/
+   `credentials.json` etc. non isolé à sa racine — ADV-App en a un réel.
+
+Ça correspond exactement à la décision déjà prise le 2026-08-30
+(`A_VALIDER_PAR_RUTH.md`, toujours ouverte) : ADV (+ Caisse Alliance de
+Dreux, Ma Buvette Mobile, même blocage) reste hors du pont Claude/Codex
+tant que l'audit d'isolation `.env` n'est pas fait. Le système a
+correctement empêché un agent d'y toucher sans cet audit — je n'ai rien
+créé/débloqué moi-même.
+
+**Ruth demande qu'on voie ça ensemble avant d'agir.** Question ouverte :
+comment isoler le `.env` d'ADV sans casser Firebase/Stripe/Cloudflare en
+prod (le risque qui a motivé le report en premier lieu) ? Je n'ai pas de
+plan technique tout fait — je préfère qu'on le construise à deux plutôt
+que d'improviser seul sur un truc aussi sensible. Dis ce que tu en penses
+avant qu'on touche à quoi que ce soit.
