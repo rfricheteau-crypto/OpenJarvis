@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -81,6 +82,10 @@ OBSIDIAN_ACTION_SOURCE_PATHS: tuple[tuple[str, Path, str], ...] = (
 )
 ADV_SNAPSHOT_PATH = PERSONAL_ROOT / "runtime" / "adv_snapshot.json"
 ADV_SNAPSHOT_TTL = 300
+ADV_PROJECT_STATE_PUBLISHER_PATH = (
+    Path.home() / "CODEX_RUTH_OS" / "CORE" / "project-state" / "publish_adv_project_state.py"
+)
+ADV_PROJECT_STATE_OUTPUT_PATH = PROJECT_STATE_SNAPSHOTS_DIR / "adv.snapshot.json"
 
 _TAG_TO_SECTION: dict[str, str] = {
     "Business": "Idées business / service",
@@ -2731,6 +2736,26 @@ def _adv_snapshot_age() -> float | None:
     return (datetime.now(timezone.utc) - datetime.fromtimestamp(mtime, tz=timezone.utc)).total_seconds()
 
 
+def _publish_adv_project_state() -> bool:
+    """Refresh the read-only ADV Project State after a local snapshot update.
+
+    This deliberately imports the local publisher by path: it performs no
+    network request and does not load runtime keys or any ADV `.env` file.
+    A publication failure must never reject an otherwise valid ADV snapshot.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location("ruthos_adv_project_state", ADV_PROJECT_STATE_PUBLISHER_PATH)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("ADV Project State publisher is unavailable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.publish(ADV_SNAPSHOT_PATH, ADV_PROJECT_STATE_OUTPUT_PATH)
+        return True
+    except Exception:
+        logger.exception("ADV Project State publication failed")
+        return False
+
+
 @router.get("/adv-snapshot")
 async def get_adv_snapshot():
     """Return ADV business snapshot — pulls from n8n webhook when stale."""
@@ -2773,6 +2798,7 @@ async def get_adv_snapshot():
                     payload["generated_at"] = datetime.now(timezone.utc).isoformat()
                     ADV_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
                     ADV_SNAPSHOT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    _publish_adv_project_state()
                     payload["_age_seconds"] = 0
                     payload["_stale"] = False
                     return payload
@@ -2806,7 +2832,7 @@ async def receive_adv_snapshot(request: Request):
             payload["generated_at"] = datetime.now(timezone.utc).isoformat()
         ADV_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
         ADV_SNAPSHOT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"ok": True}
+        return {"ok": True, "project_state_published": _publish_adv_project_state()}
     except Exception:
         logger.exception("receive_adv_snapshot failed")
         return {"ok": False}
