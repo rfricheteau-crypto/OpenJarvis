@@ -461,7 +461,7 @@ pas demandée pour l'instant).
 
 **OBJECTIF** : que la conversation Hermès du quotidien passe réellement par un raisonnement structuré (intention → outils → décision → validation), pas seulement par un appel LLM direct.
 
-**STATUT GLOBAL** : `RUTH_DECISION_REQUIRED`.
+**STATUT GLOBAL** : `READY_FOR_TEST`.
 
 **CE QUI EXISTE** : `hermes_core/orchestrator/` (decision_engine.py, mission.py, agent_bridge.py, engine.py) — classifieur d'intention réel, construction de mission structurée réelle, `policy/engine.py` + `policies/action_classes.toml`/`risk_matrix.toml` (paliers de risque réels, défaut prudent). Le pont d'exécution (`agent_bridge.py` → `CORE/bridge/route_agent.py`) est **prouvé de bout en bout à deux reprises** : chat → mission → approbation → exécution réelle → preuve écrite dans le projet, avec repli automatique Codex→Claude si quota épuisé (2026-08-30, non encore relu par Codex).
 
@@ -510,10 +510,19 @@ Pedro / Bloc Sécurité → mission liée au Bloc 20, route Codex prête,
 non remplacée. Tests serveur ciblés 11/11 et tests `hermes_core` policy/
 orchestrateur 12/12. Aucun agent n'a été lancé par ce test.
 
-**RUTH_DECISION_REQUIRED** : brancher le chat quotidien à l'orchestrateur (au-delà de l'observation) — décision à prendre, pas commencé.
-**PROCHAINE ACTION** : Codex branche le cycle explicite chat → mission →
-préparation de validation → routeur existant ; Claude rend ce cycle visible
-dans G. Aucun envoi automatique à un agent.
+**CORRECTION CHAT EXPLICITE (Codex, 2026-09-02)** : une demande de travail
+explicite attend désormais la préparation observation seule de `hermes_core`
+et répond avec la mission réellement structurée (projet, bloc, agent
+recommandé). Le chat quotidien reste une conversation normale. Cette voie ne
+crée ni validation, ni délégation, ni exécution.
+
+**TESTS** : régression serveur + `hermes_core` policy/orchestrateur : 19/19
+verts. Test humain G encore requis ; contre-revue UI G demandée à Claude.
+
+**RUTH_DECISION_REQUIRED** : aucune.
+**PROCHAINE ACTION** : Ruth teste dans G une demande explicite de préparation
+lecture seule et vérifie qu'Hermès affiche immédiatement la mission, sans
+prétendre qu'un agent travaille.
 
 ---
 

@@ -418,6 +418,61 @@ async def _observe_hermes_chat_request(message: str) -> None:
         logger.warning("Hermes observer failed; chat response remains unchanged", exc_info=True)
 
 
+async def _prepare_hermes_chat_mission_response(message: str) -> dict[str, Any]:
+    """Prépare une mission visible, sans validation, délégation ni exécution.
+
+    Le chat ne doit pas lancer le moteur en parallèle puis ignorer son résultat :
+    pour une demande de travail explicite, cette réponse est la preuve exacte de
+    la mission préparée par Hermes Core.
+    """
+    observe = _hermes_core_observer_api()
+    result = await asyncio.to_thread(
+        observe,
+        PERSONAL_ROOT,
+        raw_request=message,
+        input_mode="text",
+        source="hermes_chat_structured_mission",
+        observation_only=True,
+    )
+    request_payload = dict(result.get("current_request") or {})
+    tool_decision = dict(result.get("current_tool_decision") or {})
+    mission = dict(result.get("current_mission") or {})
+    delegation = dict(result.get("current_delegation") or {})
+    project_context = dict(mission.get("project_context") or {})
+    project_name = str(
+        project_context.get("project_name")
+        or project_context.get("project_id")
+        or request_payload.get("classified_domain")
+        or "projet à préciser"
+    )
+    if project_name.islower():
+        project_name = project_name.replace("-", " ").title()
+    block = project_context.get("block")
+    block_payload = dict(block) if isinstance(block, dict) else {}
+    block_name = str(
+        block_payload.get("name")
+        or project_context.get("block_title")
+        or project_context.get("block_id")
+        or "bloc à préciser"
+    )
+    block_id = str(block_payload.get("id") or "")
+    if block_id and block_id not in block_name:
+        block_name = f"bloc {block_id} — {block_name}"
+    if block_name.isdigit():
+        block_name = f"bloc {block_name}"
+    recommended_tool = str(tool_decision.get("recommended_tool") or "agent à confirmer")
+    return {
+        "reply": (
+            f"Mission préparée — {project_name} · {block_name}. "
+            f"Voie recommandée : {recommended_tool}. "
+            "Aucune validation, délégation ni exécution n'a été créée."
+        ),
+        "source": "hermes_structured_mission",
+        "mission_request_id": str(request_payload.get("request_id") or ""),
+        "delegation_status": str(delegation.get("delegation_status") or "observed_not_delegated"),
+    }
+
+
 def _start_hermes_chat_observer(message: str) -> asyncio.Task[None]:
     """Keep the background observer alive until it has safely completed."""
     if not _should_prepare_hermes_mission(message):
@@ -3790,10 +3845,34 @@ async def hermes_validate(request_body: HermesValidationRequest):
 @router.post("/chat")
 async def hermes_chat(request_body: HermesChatRequest, request: Request):
     """Hermes conversation route with local/OpenRouter/OpenAI routing."""
-    _start_hermes_chat_observer(request_body.message)
     config = _hermes_chat_config()
     runtime = _hermes_chat_runtime_summary()
     engine_mode = request_body.engine_mode
+    if _should_prepare_hermes_mission(request_body.message):
+        try:
+            prepared = await _prepare_hermes_chat_mission_response(request_body.message)
+        except Exception:
+            logger.warning("Hermes structured mission preparation failed; falling back to conversation", exc_info=True)
+        else:
+            return {
+                "reply": prepared["reply"],
+                "engine": "hermes-core",
+                "provider": "hermes-core",
+                "mode": engine_mode,
+                "model": "none",
+                "selection_reason": "Demande de travail explicite : mission structurée préparée sans exécution.",
+                "used_memory": True,
+                "source": prepared["source"],
+                "mission_request_id": prepared["mission_request_id"],
+                "delegation_status": prepared["delegation_status"],
+                "warning": "",
+                "fallback_used": False,
+                "budget": runtime["budget"],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "estimated_cost_usd": 0.0,
+                "local_limited": False,
+            }
+    _start_hermes_chat_observer(request_body.message)
     grounded_priority_reply = _current_priority_reply(request_body.message)
     if grounded_priority_reply:
         return {

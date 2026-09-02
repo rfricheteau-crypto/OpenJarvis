@@ -22,6 +22,66 @@ def test_chat_observer_is_background_only_and_requests_no_execution(monkeypatch)
     assert kwargs["source"] == "hermes_chat_observer"
 
 
+def test_explicit_work_request_returns_the_structured_prepared_mission(monkeypatch):
+    def orchestrate(*_args, **kwargs):
+        assert kwargs["observation_only"] is True
+        assert kwargs["source"] == "hermes_chat_structured_mission"
+        return {
+            "current_request": {"request_id": "mission-42"},
+            "current_tool_decision": {"recommended_tool": "codex"},
+            "current_mission": {
+                "project_context": {
+                    "project_id": "pedro",
+                    "block": {"id": "08", "name": "Stock Pedro"},
+                }
+            },
+            "current_delegation": {"delegation_status": "observed_not_delegated"},
+        }
+
+    monkeypatch.setattr(cockpit, "_hermes_core_observer_api", lambda: orchestrate)
+
+    payload = asyncio.run(
+        cockpit._prepare_hermes_chat_mission_response(
+            "Hermès, il faut préparer une vérification lecture seule du projet Pedro, bloc 08. Ne modifie rien."
+        )
+    )
+
+    assert payload["source"] == "hermes_structured_mission"
+    assert payload["mission_request_id"] == "mission-42"
+    assert payload["delegation_status"] == "observed_not_delegated"
+    assert "Mission préparée" in payload["reply"]
+    assert "Pedro" in payload["reply"]
+    assert "Stock Pedro" in payload["reply"]
+    assert "Voie recommandée" in payload["reply"]
+    assert "codex" in payload["reply"]
+
+
+def test_chat_returns_structured_mission_before_any_model_reply(monkeypatch):
+    async def prepared(_message: str):
+        return {
+            "reply": "Mission préparée — Pedro · bloc 08.",
+            "source": "hermes_structured_mission",
+            "mission_request_id": "mission-42",
+            "delegation_status": "observed_not_delegated",
+        }
+
+    monkeypatch.setattr(cockpit, "_prepare_hermes_chat_mission_response", prepared)
+    monkeypatch.setattr(cockpit, "_hermes_chat_config", lambda: {"local_model": "unused"})
+    monkeypatch.setattr(cockpit, "_hermes_chat_runtime_summary", lambda: {"budget": {}})
+
+    response = asyncio.run(
+        cockpit.hermes_chat(
+            cockpit.HermesChatRequest(message="Hermès, il faut préparer une vérification lecture seule du projet Pedro."),
+            request=None,
+        )
+    )
+
+    assert response["source"] == "hermes_structured_mission"
+    assert response["mission_request_id"] == "mission-42"
+    assert response["delegation_status"] == "observed_not_delegated"
+    assert response["engine"] == "hermes-core"
+
+
 def test_only_explicit_work_requests_become_hermes_missions():
     assert cockpit._should_prepare_hermes_mission("Hermès, il faut travailler le projet Pedro, bloc Sécurité.")
     assert cockpit._should_prepare_hermes_mission("Continue le bloc Marketing d'ADV.")
@@ -209,3 +269,28 @@ def test_project_state_route_is_mounted_and_read_only(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["projects"][0]["project"] == {"id": "pedro-os", "name": "Pedro OS"}
+
+
+def test_adv_snapshot_push_republishes_local_project_state(tmp_path, monkeypatch):
+    class RequestWithPayload:
+        async def json(self):
+            return {
+                "generated_at": "2026-09-02T08:00:00+00:00",
+                "abonnements": {"actifs": 7},
+                "utilisateurs": {"total": 9},
+                "usage": {"devis_total": 11, "factures_total": 12},
+                "sante_technique": {"services": {"firestore": "ok"}},
+            }
+
+    source_path = tmp_path / "adv_snapshot.json"
+    output_path = tmp_path / "snapshots" / "adv.snapshot.json"
+    monkeypatch.setattr(cockpit, "ADV_SNAPSHOT_PATH", source_path)
+    monkeypatch.setattr(cockpit, "ADV_PROJECT_STATE_OUTPUT_PATH", output_path)
+
+    result = asyncio.run(cockpit.receive_adv_snapshot(RequestWithPayload()))
+
+    assert result == {"ok": True, "project_state_published": True}
+    published = json.loads(output_path.read_text(encoding="utf-8"))
+    assert published["project"]["id"] == "adv"
+    assert "7 abonnement(s) actif(s)" in published["state"]["summary"]
+    assert all(item["verification"] == "unverified" for item in published["kpis"])
