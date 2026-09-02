@@ -34,6 +34,7 @@ INTEGRATIONS_DIR = PERSONAL_ROOT / "integrations"
 HERMES_DIR = PERSONAL_ROOT / "runtime" / "hermes"
 RUTH_OS_BRIDGE_DIR = Path.home() / "CODEX_RUTH_OS" / "CORE" / "bridge"
 PROJECT_STATE_SNAPSHOTS_DIR = Path.home() / "CODEX_RUTH_OS" / "CORE" / "project-state" / "snapshots"
+PROJECT_STATE_PROOFS_PATH = Path.home() / "CODEX_RUTH_OS" / "CORE" / "project-state" / "proofs.json"
 _PROJECT_STATE_REQUIRED_FIELDS = frozenset({"schema_version", "project", "freshness", "state"})
 
 STATE_PATH = VOICE_DIR / "v4_state.json"
@@ -2913,6 +2914,35 @@ def _project_blocks_module():
     return project_blocks
 
 
+def _published_project_proofs() -> tuple[dict[str, list[dict[str, str]]], list[str]]:
+    """Read a bounded, display-safe proof ledger without failing Project State."""
+    if not PROJECT_STATE_PROOFS_PATH.exists():
+        return {}, []
+    try:
+        payload = json.loads(PROJECT_STATE_PROOFS_PATH.read_text(encoding="utf-8"))
+        projects = payload.get("projects", {}) if isinstance(payload, dict) else {}
+        if not isinstance(projects, dict):
+            raise ValueError("projects must be an object")
+    except (OSError, ValueError, json.JSONDecodeError):
+        logger.warning("Project State proof ledger skipped: invalid or unreadable")
+        return {}, ["Registre de preuves Project State indisponible."]
+
+    safe: dict[str, list[dict[str, str]]] = {}
+    required = {"id", "label", "status", "observed_at", "source", "verification"}
+    for project_id, records in projects.items():
+        if not isinstance(project_id, str) or not isinstance(records, list):
+            continue
+        projected: list[dict[str, str]] = []
+        for record in records:
+            if not isinstance(record, dict) or not required.issubset(record):
+                continue
+            if not all(isinstance(record[key], str) and record[key] for key in required):
+                continue
+            projected.append({key: record[key] for key in required})
+        safe[project_id] = sorted(projected, key=lambda item: item["observed_at"], reverse=True)[:3]
+    return safe, []
+
+
 def _published_project_states() -> dict[str, Any]:
     """Return a safe, read-only projection of published RuthOS project snapshots.
 
@@ -2922,6 +2952,8 @@ def _published_project_states() -> dict[str, Any]:
     """
     projects: list[dict[str, Any]] = []
     warnings: list[str] = []
+    project_proofs, proof_warnings = _published_project_proofs()
+    warnings.extend(proof_warnings)
     try:
         paths = sorted(PROJECT_STATE_SNAPSHOTS_DIR.glob("*.snapshot.json"))
     except OSError:
@@ -2974,6 +3006,7 @@ def _published_project_states() -> dict[str, Any]:
                 "blockers": state.get("blockers", []),
                 "risks": state.get("risks", []),
             },
+            "proofs": project_proofs.get(project_id, []),
         })
 
     return {"projects": projects, "warnings": warnings, "source": "project-state"}

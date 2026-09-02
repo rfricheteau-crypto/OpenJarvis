@@ -249,6 +249,7 @@ def test_project_state_exposes_only_valid_published_snapshots(tmp_path, monkeypa
         "project": {"id": "pedro-os", "name": "Pedro OS"},
         "freshness": {"status": "current", "observed_at": "2026-08-31T20:00:00+02:00", "stale_after_days": 7},
         "state": {"lifecycle": "active", "summary": "Réel", "active_block": "Sécurité", "next_action": "Tester", "decisions_required": [], "blockers": [], "risks": []},
+        "proofs": [],
     }]
     assert payload["warnings"] == ["Snapshot ignoré car invalide : broken.snapshot.json"]
 
@@ -270,6 +271,45 @@ def test_project_state_route_is_mounted_and_read_only(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["projects"][0]["project"] == {"id": "pedro-os", "name": "Pedro OS"}
+
+
+def test_project_state_exposes_only_safe_matching_proofs(tmp_path, monkeypatch):
+    published = tmp_path / "snapshots"
+    published.mkdir()
+    (published / "adv.snapshot.json").write_text(json.dumps({
+        "schema_version": "1.0",
+        "project": {"id": "adv", "name": "ADV"},
+        "freshness": {},
+        "state": {},
+    }), encoding="utf-8")
+    proofs = tmp_path / "proofs.json"
+    proofs.write_text(json.dumps({
+        "schema_version": "1.0",
+        "projects": {
+            "adv": [{
+                "id": "adv-pdf-device",
+                "label": "Parcours PDF iPhone validé",
+                "status": "validated",
+                "observed_at": "2026-09-02T20:00:00+00:00",
+                "source": "Validation Ruth",
+                "verification": "human_confirmed",
+            }],
+            "other": [{"id": "invalid"}],
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(cockpit, "PROJECT_STATE_SNAPSHOTS_DIR", published)
+    monkeypatch.setattr(cockpit, "PROJECT_STATE_PROOFS_PATH", proofs)
+
+    payload = asyncio.run(cockpit.get_project_state())
+
+    assert payload["projects"][0]["proofs"] == [{
+        "id": "adv-pdf-device",
+        "label": "Parcours PDF iPhone validé",
+        "status": "validated",
+        "observed_at": "2026-09-02T20:00:00+00:00",
+        "source": "Validation Ruth",
+        "verification": "human_confirmed",
+    }]
 
 
 def test_adv_snapshot_push_republishes_local_project_state(tmp_path, monkeypatch):

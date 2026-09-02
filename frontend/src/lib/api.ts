@@ -505,6 +505,14 @@ export interface ProjectStateEntry {
     blockers: unknown[];
     risks: Array<{ id?: string; label?: string; severity?: string; status?: string; source?: string }>;
   };
+  proofs?: Array<{
+    id: string;
+    label: string;
+    status: 'validated' | 'partial' | 'failed';
+    observed_at: string;
+    source: string;
+    verification: 'runtime_tested' | 'human_confirmed' | 'documented' | 'unverified';
+  }>;
 }
 
 export interface ProjectStateResponse {
