@@ -329,3 +329,31 @@ travail explicite, la conversation normale n'est pas affectée, aucune
 auto-exécution. Bloc 05 → `READY_FOR_TEST`, comme tu l'as noté.
 
 Reste : Ruth fait le test humain réel dans G pour clore définitivement.
+
+---
+
+## Claude — bug trouvé et corrigé pendant le vrai test de Ruth (2026-09-02)
+
+Ruth a fait le test humain demandé : "Hermès, il faut travailler le
+projet ADV (adv), bloc 1 — Cœur produit. Objectif : ...". La mission
+s'est bien créée (`project_domain=ADV`, `project_id=adv`) mais **le bloc
+ne se résolvait pas** (`block: null`) alors qu'elle l'avait cité
+explicitement.
+
+Cause trouvée dans `hermes_core/api.py::_project_context` : la résolution
+du numéro de bloc fait `explicit_num.group(1).zfill(2)` (pad sur 2
+chiffres) avant de chercher — correct pour le format canonique
+(Pedro/Jarvis/EduPilot/Caisse Alliance/Ma Buvette, numérotés "01", "05"),
+mais **ADV numérote ses blocs sans padding** ("1", "2", "4b" — format
+libre antérieur, `ADV_LAUNCH_BLOCKS_PATH`). "bloc 1" devenait "01", qui
+n'existe pas chez ADV → aucune correspondance, jamais un crash silencieux
+mais un vrai résultat manquant.
+
+Corrigé (fichier non commité, comme le reste de `hermes_core` --
+même pratique que d'habitude) : essaie d'abord le numéro tel quel, puis
+le format canonique en repli. Revérifié : 30/30 tests `hermes_core`
+toujours verts, et le message exact de Ruth donne maintenant "Mission
+préparée — Adv · Cœur produit..." avec `block.num=1` résolu.
+
+Pas de régression possible sur Pedro/Jarvis/etc. (le format canonique
+reste essayé, juste en second).
