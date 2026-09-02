@@ -455,7 +455,7 @@ async def _prepare_hermes_chat_mission_response(message: str) -> dict[str, Any]:
         or project_context.get("block_id")
         or "bloc à préciser"
     )
-    block_id = str(block_payload.get("id") or "")
+    block_id = str(block_payload.get("id") or block_payload.get("num") or "")
     if block_id and block_id not in block_name:
         block_name = f"bloc {block_id} — {block_name}"
     if block_name.isdigit():

@@ -32,7 +32,7 @@ def test_explicit_work_request_returns_the_structured_prepared_mission(monkeypat
             "current_mission": {
                 "project_context": {
                     "project_id": "pedro",
-                    "block": {"id": "08", "name": "Stock Pedro"},
+                    "block": {"num": "08", "name": "Stock Pedro"},
                 }
             },
             "current_delegation": {"delegation_status": "observed_not_delegated"},
@@ -51,6 +51,7 @@ def test_explicit_work_request_returns_the_structured_prepared_mission(monkeypat
     assert payload["delegation_status"] == "observed_not_delegated"
     assert "Mission préparée" in payload["reply"]
     assert "Pedro" in payload["reply"]
+    assert "bloc 08" in payload["reply"]
     assert "Stock Pedro" in payload["reply"]
     assert "Voie recommandée" in payload["reply"]
     assert "codex" in payload["reply"]
