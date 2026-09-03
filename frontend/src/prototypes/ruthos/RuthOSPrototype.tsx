@@ -127,6 +127,12 @@ const LIFECYCLE_LABELS_FR: Record<string, string> = {
   paused: 'En pause',
   dormant: 'Dormant',
 };
+const PROOF_VERIFICATION_LABELS_FR: Record<string, string> = {
+  human_confirmed: 'Confirmé par Ruth',
+  runtime_tested: 'Testé en runtime',
+  documented: 'Documenté',
+  unverified: 'Non vérifié',
+};
 
 // Les champs de bloc viennent tels quels de PROJECT_BUILD_MAP.md (markdown
 // écrit par des humains/agents) — `` `code` `` et `**gras**` doivent être
@@ -1390,6 +1396,21 @@ function ProjectDetail({
                   {projectState.state.risks.length} risque{projectState.state.risks.length > 1 ? 's' : ''} ouvert{projectState.state.risks.length > 1 ? 's' : ''} : {projectState.state.risks.map((r) => r.label).filter(Boolean).join(' · ')}
                 </p>
               ) : null}
+              {projectState.proofs && projectState.proofs.length > 0 ? (
+                <div className="g-proof-list">
+                  {projectState.proofs.map((proof) => (
+                    <div className={`g-proof-row g-proof-row-${proof.status}`} key={proof.id}>
+                      <CheckCircle2 size={13} className="g-proof-icon" />
+                      <span className="g-proof-label">{proof.label}</span>
+                      <span className="g-proof-meta">
+                        {PROOF_VERIFICATION_LABELS_FR[proof.verification] ?? proof.verification}
+                        {' · '}
+                        {new Date(proof.observed_at).toLocaleDateString('fr-FR')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -1849,12 +1870,18 @@ function VariantG({
       try {
         const status = await fetchAgentsStatus();
         const execStatus = status.execution?.status;
-        if (execStatus === 'completed' || execStatus === 'failed') {
+        if (['completed_sync', 'review_completed', 'sync_failed', 'failed'].includes(execStatus || '')) {
           await refreshProposedMission();
-          await onRefresh?.();
           if (!mountedRef.current) return;
-          if (execStatus === 'completed') {
+          if (execStatus === 'completed_sync') {
+            // Seul ce statut prouve que le rescan et l'écriture de la source
+            // projet ont réussi : recharger alors le détail de bloc.
+            await onRefresh?.();
             toast.success('Résultat reçu — voir "Dernière exécution réelle".');
+          } else if (execStatus === 'review_completed') {
+            toast.success('Contre-revue terminée — aucun changement projet appliqué.');
+          } else if (execStatus === 'sync_failed') {
+            toast.error('Travail exécuté — synchronisation de l’état projet échouée');
           } else {
             toast.error(status.execution?.error || 'Exécution échouée.');
           }
@@ -2062,9 +2089,17 @@ function VariantG({
                 );
                 const agent = lastExecution.executed_by || lastExecution.requested_agent || 'agent inconnu';
                 const when = lastExecution.resolved_at || lastExecution.executed_at;
+                const reviewOnly = lastExecution.execution_status === 'review_completed';
+                const syncFailed = lastExecution.execution_status === 'sync_failed';
                 return (
                   <div className="g-mission-card g-last-execution-card">
-                    <span className="g-mission-eyebrow g-mission-eyebrow-done">Dernier compte rendu d’agent — exécution prouvée</span>
+                    <span className="g-mission-eyebrow g-mission-eyebrow-done">
+                      {reviewOnly
+                        ? 'Dernière contre-revue d’agent — lecture seule'
+                        : syncFailed
+                          ? 'Travail exécuté — synchronisation projet échouée'
+                          : 'Dernier compte rendu d’agent — exécution prouvée'}
+                    </span>
                     {historyEntry ? (
                       <p className="g-mission-context">
                         Projet <strong>{historyEntry.project_id || '—'}</strong>
@@ -2087,7 +2122,7 @@ function VariantG({
                       </p>
                     )}
                     <p className="g-mission-agent">
-                      Exécuté par <strong>{agent}</strong>
+                      {reviewOnly ? 'Contre-revue par ' : 'Exécuté par '}<strong>{agent}</strong>
                       {lastExecution.fallback_used ? ' (repli automatique)' : ''}
                       {when
                         ? ` · ${new Date(when).toLocaleString('fr-FR', {
@@ -2604,6 +2639,13 @@ const RUTH_OS_VARIANT_FG_STYLES = `
 .g-mission-card{margin-top:14px;padding:14px 16px;border-radius:14px;background:rgba(167,139,250,.08);border:1px solid rgba(167,139,250,.25);text-align:left}
 .g-project-state-card{margin-top:16px;padding:14px 16px;border-radius:14px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.22);text-align:left}
 .g-project-state-risk{color:#fbbf24}
+.g-proof-list{margin-top:10px;padding-top:10px;border-top:1px solid rgba(59,130,246,.18);display:flex;flex-direction:column;gap:5px}
+.g-proof-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--d-muted)}
+.g-proof-icon{flex-shrink:0;color:#4ade80}
+.g-proof-row-partial .g-proof-icon{color:#fbbf24}
+.g-proof-row-failed .g-proof-icon{color:#f87171}
+.g-proof-label{color:var(--d-text);font-weight:500}
+.g-proof-meta{margin-left:auto;flex-shrink:0;color:var(--d-muted);font-size:10.5px}
 .g-mission-eyebrow{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c4b5fd;margin-bottom:6px}
 .g-mission-summary{margin:0 0 6px;font-size:13.5px;color:var(--d-text)}
 .g-mission-context,.g-mission-agent{margin:0 0 4px;font-size:12px;color:var(--d-muted)}

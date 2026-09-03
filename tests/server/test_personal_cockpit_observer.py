@@ -1,10 +1,19 @@
 import asyncio
 import json
+from pathlib import Path
+import sys
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from openjarvis.server import personal_cockpit as cockpit
+
+PERSONAL_ROOT = Path.home() / ".openjarvis" / "jarvis-personal"
+if str(PERSONAL_ROOT) not in sys.path:
+    sys.path.insert(0, str(PERSONAL_ROOT))
+
+import hermes_core
+import project_blocks
 
 
 def test_chat_observer_is_background_only_and_requests_no_execution(monkeypatch):
@@ -131,6 +140,109 @@ def test_approved_execution_reports_running_before_background_completion(tmp_pat
 
     asyncio.run(exercise())
     assert started[0]["pending"]["mission_request_id"] == "mission-42"
+
+
+def test_approved_agent_is_not_completed_until_adv_rescan_syncs_source(tmp_path, monkeypatch):
+    launch = tmp_path / "ADV_LAUNCH_BLOCKS.md"
+    checklist = tmp_path / "ADV_MASTER_CHECKLIST.md"
+    launch.write_text("## Block 1 — Product core\n", encoding="utf-8")
+    checklist.write_text("## E. Checks\n- [ ] Verify PDF generation output\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "pdf.ts").write_text("ready\n", encoding="utf-8")
+    monkeypatch.setattr(project_blocks, "ADV_LAUNCH_BLOCKS_PATH", launch)
+    monkeypatch.setattr(project_blocks, "ADV_MASTER_CHECKLIST_PATH", checklist)
+    scope = project_blocks.snapshot_block("adv", "1")
+    item_id = scope["items"][0]["item_id"]
+
+    mission_path = tmp_path / "current_mission.json"
+    mission_path.write_text(json.dumps({
+        "request_id": "mission-sync-42",
+        "project_context": {
+            "project_id": "adv", "project_root": str(tmp_path),
+            "block": {"num": "1", "name": "Product core"},
+            "reconciliation_scope": scope,
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(cockpit, "CURRENT_MISSION_PATH", mission_path)
+    monkeypatch.setattr(cockpit, "HERMES_EXECUTION_STATUS_PATH", tmp_path / "execution.json")
+    monkeypatch.setattr(cockpit, "ACTIONS_PATH", tmp_path / "actions.jsonl")
+    monkeypatch.setattr(cockpit, "_project_blocks_module", lambda: project_blocks)
+    recorded = []
+    report = (
+        "Agent finished\nRUTHOS_RESULT_JSON\n"
+        + json.dumps({"project_id": "adv", "block_id": "1", "items": [{
+            "item_id": item_id, "done": True, "verified": True, "tested": True,
+            "evidence": "PDF test passed", "files": ["src/pdf.ts"], "tests": ["unit"],
+        }]})
+    )
+    monkeypatch.setattr(hermes_core, "execute_approved_agent_via_core", lambda *_a, **_k: {
+        "status": "executed", "execution_capability": "controlled_write", "result_summary": report, "executed_by": "codex", "requested_agent": "codex",
+    })
+    monkeypatch.setattr(hermes_core, "record_delegation_result_via_core", lambda *_a, **kw: recorded.append(kw))
+    monkeypatch.setattr(cockpit, "_hermes_core_validation_api", lambda: (None, None, lambda *_a, **_k: {}))
+
+    asyncio.run(cockpit._execute_approved_mission_in_background(
+        pending={"mission_request_id": "mission-sync-42"},
+        action="Déléguer à Codex",
+        initial_result_summary="approved",
+    ))
+
+    assert cockpit._current_hermes_execution()["status"] == "completed_sync"
+    assert recorded[-1]["execution_status"] == "completed_sync"
+    assert "- [x] Verify PDF generation output" in checklist.read_text(encoding="utf-8")
+
+
+def test_read_only_agent_review_never_mutates_a_project_block(tmp_path, monkeypatch):
+    mission_path = tmp_path / "current_mission.json"
+    mission_path.write_text(json.dumps({"request_id": "review-only"}), encoding="utf-8")
+    monkeypatch.setattr(cockpit, "CURRENT_MISSION_PATH", mission_path)
+    monkeypatch.setattr(cockpit, "HERMES_EXECUTION_STATUS_PATH", tmp_path / "execution.json")
+    monkeypatch.setattr(cockpit, "ACTIONS_PATH", tmp_path / "actions.jsonl")
+    recorded = []
+    monkeypatch.setattr(hermes_core, "execute_approved_agent_via_core", lambda *_a, **_k: {
+        "status": "executed", "execution_capability": "read_only_review", "result_summary": "Audit trouvé.",
+    })
+    monkeypatch.setattr(hermes_core, "record_delegation_result_via_core", lambda *_a, **kw: recorded.append(kw))
+    monkeypatch.setattr(cockpit, "_hermes_core_validation_api", lambda: (None, None, lambda *_a, **_k: {}))
+
+    asyncio.run(cockpit._execute_approved_mission_in_background(
+        pending={"mission_request_id": "review-only"},
+        action="Déléguer à Codex",
+        initial_result_summary="approved",
+    ))
+
+    status = cockpit._current_hermes_execution()
+    assert status["status"] == "review_completed"
+    assert "lecture seule" in status["error"]
+    assert recorded[-1]["execution_status"] == "review_completed"
+
+
+def test_agent_execution_with_plain_text_is_reported_as_sync_failed(tmp_path, monkeypatch):
+    mission_path = tmp_path / "current_mission.json"
+    mission_path.write_text(json.dumps({
+        "request_id": "mission-sync-fail",
+        "project_context": {"project_id": "adv", "project_root": str(tmp_path), "block": {"num": "1"}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cockpit, "CURRENT_MISSION_PATH", mission_path)
+    monkeypatch.setattr(cockpit, "HERMES_EXECUTION_STATUS_PATH", tmp_path / "execution.json")
+    monkeypatch.setattr(cockpit, "ACTIONS_PATH", tmp_path / "actions.jsonl")
+    recorded = []
+    monkeypatch.setattr(hermes_core, "execute_approved_agent_via_core", lambda *_a, **_k: {
+        "status": "executed", "execution_capability": "controlled_write", "result_summary": "rapport libre sans contrat",
+    })
+    monkeypatch.setattr(hermes_core, "record_delegation_result_via_core", lambda *_a, **kw: recorded.append(kw))
+    monkeypatch.setattr(cockpit, "_hermes_core_validation_api", lambda: (None, None, lambda *_a, **_k: {}))
+
+    asyncio.run(cockpit._execute_approved_mission_in_background(
+        pending={"mission_request_id": "mission-sync-fail"},
+        action="Déléguer à Codex",
+        initial_result_summary="approved",
+    ))
+
+    status = cockpit._current_hermes_execution()
+    assert status["status"] == "sync_failed"
+    assert "Travail exécuté — synchronisation de l’état projet échouée" in status["error"]
+    assert recorded[-1]["execution_status"] == "sync_failed"
 
 
 def test_background_observer_task_is_kept_until_completion(monkeypatch):

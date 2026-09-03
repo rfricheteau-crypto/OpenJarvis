@@ -3325,7 +3325,7 @@ async def get_proposed_mission():
         (
             entry
             for entry in reversed(mission_history)
-            if entry.get("execution_status") in {"executed", "result_logged"}
+            if entry.get("execution_status") in {"executed", "result_logged", "completed_sync", "sync_failed", "review_completed"}
             and entry.get("result_summary")
         ),
         None,
@@ -3349,7 +3349,7 @@ async def get_proposed_mission():
                 for key in ("mission_request_id", "execution_status", "result_summary", "executed_at", "resolved_at", "requested_agent", "executed_by", "fallback_used")
                 if last_resolved.get(key) not in (None, "")
             }
-            if last_resolved.get("execution_status") in {"executed", "result_logged"}
+            if last_resolved.get("execution_status") in {"executed", "result_logged", "completed_sync", "sync_failed", "review_completed"}
             else {}
         )
     # Le texte libre de l'agent n'est pas le registre de décisions de Ruth.
@@ -3368,7 +3368,7 @@ async def get_proposed_mission():
         mission
         and str(mission.get("request_id") or "")
         and str(mission.get("request_id")) == str(last_execution.get("mission_request_id") or "")
-        and last_execution.get("execution_status") in {"executed", "result_logged"}
+        and last_execution.get("execution_status") in {"executed", "result_logged", "completed_sync", "sync_failed", "review_completed"}
     ):
         return {"has_mission": False, "mission": None, "route": None, "mission_history": mission_history, "last_execution": last_execution or None}
     # A status question is conversation, never work to delegate. Older runtime
@@ -3556,9 +3556,16 @@ async def _execute_approved_mission_in_background(
     """Run one already-approved agent without blocking the HTTP/UI event loop."""
     mission_request_id = str(pending.get("mission_request_id") or "")
     try:
-        from hermes_core import execute_approved_agent_via_core
+        from hermes_core import execute_approved_agent_via_core, record_delegation_result_via_core
 
-        exec_result = await asyncio.to_thread(execute_approved_agent_via_core, PERSONAL_ROOT)
+        # The agent has worked, but its output is not a completed mission yet.
+        # Recording is deferred until Hermès has rescanned and reconciled the
+        # actual project source.
+        exec_result = await asyncio.to_thread(
+            execute_approved_agent_via_core,
+            PERSONAL_ROOT,
+            defer_result_recording=True,
+        )
         execution_status = str(exec_result.get("status") or "blocked")
         result_summary = str(exec_result.get("result_summary") or initial_result_summary)
         if execution_status != "executed":
@@ -3570,35 +3577,119 @@ async def _execute_approved_mission_in_background(
             )
             return
 
-        mission = _load_json(CURRENT_MISSION_PATH) or {}
-        block_ctx = (mission.get("project_context") or {}).get("block") or {}
-        project_id = (mission.get("project_context") or {}).get("project_id")
-        if project_id and block_ctx.get("num"):
-            try:
-                pb = _project_blocks_module()
-                current_block = pb.get_block(project_id, block_ctx["num"])
-                if current_block:
-                    pb.update_block_status(
-                        project_id,
-                        block_ctx["num"],
-                        new_status=current_block.get("status") or "IN_PROGRESS",
-                        evidence=f"Consultation agent réelle (approuvée par Ruth) : {result_summary[:300]}",
-                        actor="hermes",
-                    )
-            except Exception:
-                logger.exception("update_block_status failed after async execution")
+        # The current Claude/Codex bridge is intentionally read-only. It may
+        # provide a valuable review, but can never be presented as a project
+        # change or cause items to leave "Manque". A future writer has to be
+        # separately sealed and identify itself explicitly here.
+        if str(exec_result.get("execution_capability") or "read_only_review") != "controlled_write":
+            review_only_error = "Agent exécuté en lecture seule — aucune modification projet à synchroniser"
+            await asyncio.to_thread(
+                record_delegation_result_via_core,
+                PERSONAL_ROOT,
+                execution_status="review_completed",
+                result_summary=result_summary,
+                executed_by=str(exec_result.get("executed_by") or ""),
+                requested_agent=str(exec_result.get("requested_agent") or ""),
+                fallback_used=bool(exec_result.get("fallback_used", False)),
+            )
+            _, _, resolve_validation_via_core = _hermes_core_validation_api()
+            await asyncio.to_thread(
+                resolve_validation_via_core,
+                PERSONAL_ROOT,
+                resolution="approved",
+                execution_status="review_completed",
+                result_summary=result_summary,
+            )
+            _append_jsonl(ACTIONS_PATH, {
+                "kind": "approved_delegation_review_completed",
+                "action": action,
+                "execution_status": "review_completed",
+                "source": "cockpit_async",
+            })
+            _write_hermes_execution_status(
+                status="review_completed",
+                mission_request_id=mission_request_id,
+                summary=result_summary,
+                error=review_only_error,
+            )
+            return
 
+        mission = _load_json(CURRENT_MISSION_PATH) or {}
+        project_context = mission.get("project_context") or {}
+        block_ctx = project_context.get("block") or {}
+        project_id = project_context.get("project_id")
+        try:
+            if not project_id or not block_ctx.get("num"):
+                raise ValueError("Mission sans projet/bloc réconciliable.")
+            pb = _project_blocks_module()
+            candidate = pb.extract_result(result_summary)
+            sync = pb.reconcile_agent_result(
+                str(project_id),
+                str(block_ctx["num"]),
+                before=dict(project_context.get("reconciliation_scope") or {}),
+                result=candidate,
+                project_root=Path(str(project_context["project_root"])),
+                request_id=mission_request_id,
+            )
+        except Exception as exc:
+            logger.exception("project reconciliation failed after agent execution")
+            sync = {"status": "sync_failed", "reason": str(exc), "changed": []}
+
+        if sync.get("status") != "completed_sync":
+            sync_error = "Travail exécuté — synchronisation de l’état projet échouée"
+            detail = str(sync.get("reason") or "Résultat agent ou rescan non conforme.")
+            await asyncio.to_thread(
+                record_delegation_result_via_core,
+                PERSONAL_ROOT,
+                execution_status="sync_failed",
+                result_summary=result_summary,
+                executed_by=str(exec_result.get("executed_by") or ""),
+                requested_agent=str(exec_result.get("requested_agent") or ""),
+                fallback_used=bool(exec_result.get("fallback_used", False)),
+            )
+            _, _, resolve_validation_via_core = _hermes_core_validation_api()
+            await asyncio.to_thread(
+                resolve_validation_via_core,
+                PERSONAL_ROOT,
+                resolution="approved",
+                execution_status="sync_failed",
+                result_summary=result_summary,
+            )
+            _append_jsonl(ACTIONS_PATH, {
+                "kind": "approved_delegation_project_sync_failed",
+                "action": action,
+                "execution_status": "sync_failed",
+                "reason": detail,
+                "source": "cockpit_async",
+            })
+            _write_hermes_execution_status(
+                status="sync_failed",
+                mission_request_id=mission_request_id,
+                summary=result_summary,
+                error=f"{sync_error} — {detail}",
+            )
+            return
+
+        await asyncio.to_thread(
+            record_delegation_result_via_core,
+            PERSONAL_ROOT,
+            execution_status="completed_sync",
+            result_summary=result_summary,
+            executed_by=str(exec_result.get("executed_by") or ""),
+            requested_agent=str(exec_result.get("requested_agent") or ""),
+            fallback_used=bool(exec_result.get("fallback_used", False)),
+        )
         _, _, resolve_validation_via_core = _hermes_core_validation_api()
         await asyncio.to_thread(
             resolve_validation_via_core,
             PERSONAL_ROOT,
             resolution="approved",
-            execution_status="executed",
+            execution_status="completed_sync",
             result_summary=result_summary,
         )
         last_validated = _validated_action_record(
             action=action,
-            execution_status="executed",
+            execution_status="completed_sync",
             result_summary=result_summary,
             executable=None,
         )
@@ -3608,12 +3699,12 @@ async def _execute_approved_mission_in_background(
             {
                 "kind": "approved_delegation_handoff_completed",
                 "action": action,
-                "execution_status": "executed",
+                "execution_status": "completed_sync",
                 "source": "cockpit_async",
             },
         )
         _write_hermes_execution_status(
-            status="completed",
+            status="completed_sync",
             mission_request_id=mission_request_id,
             summary=result_summary,
         )
