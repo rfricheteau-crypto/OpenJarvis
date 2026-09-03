@@ -1524,11 +1524,13 @@ function ProjectDetail({
 function BlockDetail({
   project,
   blockNum,
+  missionHistory,
   onBack,
   onOpenHermes,
 }: {
   project: ProjectData;
   blockNum: string;
+  missionHistory: MissionHistoryEntry[];
   onBack: () => void;
   onOpenHermes: (message: string) => void;
 }) {
@@ -1582,6 +1584,18 @@ function BlockDetail({
   }
 
   const meta = blockStatusMeta(block.status, block.pct);
+  // L'activité agent est une preuve complémentaire du bloc, pas une deuxième
+  // source de vérité : le Build Map conserve seul son statut et son avancement.
+  const latestBlockActivity = missionHistory
+    .filter((entry) => (
+      entry.project_id === project.id
+      && entry.block_num === block.num
+      && Boolean(entry.result_summary?.trim())
+      && ['executed', 'review_completed', 'completed_sync', 'sync_failed', 'failed'].includes(entry.execution_status)
+    ))
+    .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0];
+  const isReadOnlyReview = latestBlockActivity?.execution_status === 'review_completed';
+  const syncFailed = latestBlockActivity?.execution_status === 'sync_failed';
   const rows: Array<{ label: string; value: string; muted?: boolean }> = [
     { label: 'Existe', value: cleanText(block.existe, 'Rien de renseigné.') },
     { label: 'Manque', value: cleanText(block.manque, 'Rien de renseigné.'), muted: true },
@@ -1631,6 +1645,28 @@ function BlockDetail({
             <div className="g-pending-action" style={{ marginTop: 20 }}>
               <span>Prochaine action de ce bloc</span>
               <strong>{renderInlineMarkdown(block.next_action)}</strong>
+            </div>
+          ) : null}
+
+          {latestBlockActivity ? (
+            <div className="g-mission-card g-block-activity-card">
+              <span className="g-mission-eyebrow g-mission-eyebrow-done">
+                {isReadOnlyReview
+                  ? 'Dernière contre-revue Hermès — lecture seule'
+                  : syncFailed
+                    ? 'Travail exécuté — synchronisation projet échouée'
+                    : 'Dernière activité Hermès sur ce bloc'}
+              </span>
+              <p className="g-mission-context">
+                {isReadOnlyReview ? 'Contre-revue par ' : 'Agent : '}<strong>{latestBlockActivity.executed_by || latestBlockActivity.requested_agent || 'agent inconnu'}</strong>
+                {latestBlockActivity.updated_at ? ` · ${new Date(latestBlockActivity.updated_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+              </p>
+              <p className="g-mission-summary">
+                {cleanText(latestBlockActivity.result_summary, 'Résultat enregistré, sans résumé détaillé.')}
+              </p>
+              {isReadOnlyReview ? (
+                <p className="g-mission-context">Aucune modification projet n’a été appliquée : le pont est volontairement en lecture seule.</p>
+              ) : null}
             </div>
           ) : null}
 
@@ -1777,6 +1813,12 @@ function VariantG({
       // L'observateur Hermès tourne en tâche de fond côté serveur — laisser
       // un court délai avant de relire la mission proposée qu'il prépare.
       setTimeout(() => void refreshProposedMission(), 900);
+      // Revue indépendante déclenchée par chat ("vérifie le bloc…") : un vrai
+      // appel agent tourne en tâche de fond côté serveur, suivre son statut
+      // comme pour "Approuver et envoyer" plutôt que laisser Ruth deviner.
+      if (result.source === 'hermes_reconciliation_review_dispatched') {
+        void pollExecutionStatus();
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Envoi à Hermès impossible');
     } finally {
@@ -1870,7 +1912,7 @@ function VariantG({
       try {
         const status = await fetchAgentsStatus();
         const execStatus = status.execution?.status;
-        if (['completed_sync', 'review_completed', 'sync_failed', 'failed'].includes(execStatus || '')) {
+        if (['completed_sync', 'review_completed', 'no_change', 'sync_failed', 'failed'].includes(execStatus || '')) {
           await refreshProposedMission();
           if (!mountedRef.current) return;
           if (execStatus === 'completed_sync') {
@@ -1880,6 +1922,8 @@ function VariantG({
             toast.success('Résultat reçu — voir "Dernière exécution réelle".');
           } else if (execStatus === 'review_completed') {
             toast.success('Contre-revue terminée — aucun changement projet appliqué.');
+          } else if (execStatus === 'no_change') {
+            toast.success(status.execution?.summary || 'Revue terminée — rien de prouvable pour l’instant, état inchangé.');
           } else if (execStatus === 'sync_failed') {
             toast.error('Travail exécuté — synchronisation de l’état projet échouée');
           } else {
@@ -1945,6 +1989,7 @@ function VariantG({
       <BlockDetail
         project={PROJECTS[projectId]}
         blockNum={blockNum}
+        missionHistory={missionHistory}
         onBack={onBackToBlocks}
         onOpenHermes={handleOpenHermesWithContext}
       />

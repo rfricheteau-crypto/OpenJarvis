@@ -447,3 +447,87 @@ def test_adv_snapshot_push_republishes_local_project_state(tmp_path, monkeypatch
     assert published["project"]["id"] == "adv"
     assert "7 abonnement(s) actif(s)" in published["state"]["summary"]
     assert all(item["verification"] == "unverified" for item in published["kpis"])
+
+
+def test_only_explicit_verification_requests_dispatch_reconciliation_review():
+    assert cockpit._should_dispatch_reconciliation_review("Hermès, vérifie le bloc 1 du projet ADV.")
+    assert cockpit._should_dispatch_reconciliation_review("J'ai terminé le bloc Sécurité, confirme.")
+    assert cockpit._should_dispatch_reconciliation_review("Synchronise le bloc Marketing d'ADV.")
+
+    assert not cockpit._should_dispatch_reconciliation_review("Bonjour Hermès")
+    assert not cockpit._should_dispatch_reconciliation_review("Quel est le prochain bloc Pedro ?")
+    assert not cockpit._should_dispatch_reconciliation_review("................")
+
+
+def test_verification_and_work_intents_never_both_fire_on_the_same_message():
+    """Les deux détecteurs doivent rester mutuellement exclusifs — sinon un
+    message déclenche à la fois une mission ET une revue, ambigu pour Ruth."""
+    verification_messages = [
+        "Hermès, vérifie le bloc 1 du projet ADV.",
+        "J'ai terminé le bloc Sécurité, confirme.",
+        "Synchronise le bloc Marketing d'ADV.",
+        "Relis le bloc 08 de Pedro.",
+    ]
+    work_messages = [
+        "Hermès, il faut travailler le projet Pedro, bloc Sécurité.",
+        "Continue le bloc Marketing d'ADV.",
+        "Aide-moi à préparer le devis Pedro.",
+    ]
+    for message in verification_messages:
+        assert cockpit._should_dispatch_reconciliation_review(message)
+        assert not cockpit._should_prepare_hermes_mission(message)
+    for message in work_messages:
+        assert cockpit._should_prepare_hermes_mission(message)
+        assert not cockpit._should_dispatch_reconciliation_review(message)
+
+
+def test_dispatch_reconciliation_review_reports_unresolved_project_clearly(monkeypatch):
+    def observer(*_args, **_kwargs):
+        return {"current_request": {"request_id": "req-1"}, "current_mission": {"project_context": {}}}
+
+    monkeypatch.setattr(cockpit, "_hermes_core_observer_api", lambda: observer)
+
+    payload = asyncio.run(cockpit._dispatch_reconciliation_review_chat("Hermès, vérifie le bloc."))
+
+    assert payload["source"] == "hermes_reconciliation_review_unresolved"
+    assert "projet et le bloc" in payload["reply"]
+
+
+def test_dispatch_reconciliation_review_launches_background_task(monkeypatch):
+    def observer(*_args, **kwargs):
+        assert kwargs["observation_only"] is True
+        assert kwargs["source"] == "hermes_chat_reconciliation_review"
+        return {
+            "current_request": {"request_id": "req-verif-1"},
+            "current_mission": {
+                "project_context": {
+                    "project_id": "adv",
+                    "project_name": "ADV",
+                    "project_root": "/tmp/adv",
+                    "block": {"num": "1", "name": "Cœur produit"},
+                }
+            },
+        }
+
+    status_calls = []
+    monkeypatch.setattr(cockpit, "_hermes_core_observer_api", lambda: observer)
+    monkeypatch.setattr(
+        cockpit, "_write_hermes_execution_status",
+        lambda **kwargs: status_calls.append(kwargs),
+    )
+
+    async def fake_review(**_kwargs):
+        return None
+
+    monkeypatch.setattr(cockpit, "_run_independent_reconciliation_review", fake_review)
+
+    payload = asyncio.run(
+        cockpit._dispatch_reconciliation_review_chat("Hermès, vérifie le bloc 1 du projet ADV.")
+    )
+
+    assert payload["source"] == "hermes_reconciliation_review_dispatched"
+    assert payload["mission_request_id"] == "req-verif-1"
+    assert "ADV" in payload["reply"]
+    assert "Cœur produit" in payload["reply"]
+    assert status_calls[0]["status"] == "running"
+    assert status_calls[0]["mission_request_id"] == "req-verif-1"

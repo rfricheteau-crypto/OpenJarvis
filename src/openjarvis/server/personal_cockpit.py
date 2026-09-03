@@ -378,6 +378,12 @@ _UNVERIFIED_RUTH_DECISION_CLAIM_RE = re.compile(
     r"\b(?:validé|validée|approuvé|approuvée|décidé|décidée)\s+(?:par|avec)\s+Ruth\b",
     re.IGNORECASE,
 )
+_HERMES_RECONCILE_INTENT_RE = re.compile(
+    r"\b(?:vérifie|vérifier|confirme|confirmer|synchronise|synchroniser|relis|relire|"
+    r"contre-revue|contre\s+revue)\b.*\bbloc\b"
+    r"|\bj[\'’]ai\s+(?:termin[ée]|fini)\b.*\bbloc\b",
+    re.IGNORECASE,
+)
 _HERMES_NEXT_ACTIONS_MAX_AGE_SECONDS = 24 * 60 * 60
 _HERMES_STATUS_QUESTION_RE = re.compile(
     r"^\s*(?:hermès\s*,?\s*)?(?:quelle\s+est\s+ma\s+priorité|où\s+en\s+est|qu['’]est-ce\s+qu['’]il\s+reste|"
@@ -401,6 +407,145 @@ def _should_prepare_hermes_mission(message: str) -> bool:
         and not _HERMES_STATUS_QUESTION_RE.search(normalized)
         and bool(_HERMES_TASK_INTENT_RE.search(normalized))
     )
+
+
+def _should_dispatch_reconciliation_review(message: str) -> bool:
+    """Vrai uniquement pour une demande explicite de vérification après un
+    travail humain réel — jamais pour une simple question de statut ni pour
+    une demande de travail (voir _should_prepare_hermes_mission). Ruth,
+    2026-09-03 : "après un travail réalisé dans une session interactive
+    contrôlée, Hermès rescannera le projet et mettra le Build Map à jour
+    avec preuves" — ceci est le déclencheur de cette phrase.
+    """
+    normalized = " ".join(message.split())
+    meaningful = re.sub(r"[^\wÀ-ÿ]", "", normalized, flags=re.UNICODE)
+    return (
+        len(meaningful) >= 8
+        and not _HERMES_STATUS_QUESTION_RE.search(normalized)
+        and bool(_HERMES_RECONCILE_INTENT_RE.search(normalized))
+    )
+
+
+def _reconciliation_review_module():
+    """Import paresseux de CORE/bridge/reconciliation_review.py — même
+    mécanisme de sys.path que project_blocks pour build_map_result."""
+    core_root = Path.home() / "CODEX_RUTH_OS"
+    if str(core_root) not in os.sys.path:
+        os.sys.path.insert(0, str(core_root))
+    from CORE.bridge import reconciliation_review
+
+    return reconciliation_review
+
+
+async def _run_independent_reconciliation_review(
+    *, project_id: str, block_num: str, project_root: str, work_context: str, mission_request_id: str,
+) -> None:
+    """Dispatche une revue indépendante réelle (agent lecture seule, jamais
+    celui qui a fait le travail rapporté) et réconcilie le Build Map si elle
+    apporte une preuve suffisante. Tâche de fond : un vrai appel agent peut
+    prendre plusieurs minutes, jamais bloquant pour la boucle HTTP."""
+    try:
+        review_module = _reconciliation_review_module()
+        result = await asyncio.to_thread(
+            review_module.dispatch_independent_review,
+            project_id=project_id,
+            block_num=block_num,
+            project_root=Path(project_root),
+            work_context=work_context,
+        )
+    except Exception as exc:
+        logger.exception("independent reconciliation review failed")
+        _write_hermes_execution_status(
+            status="sync_failed",
+            mission_request_id=mission_request_id,
+            error=f"Revue indépendante impossible : {exc}",
+        )
+        return
+
+    status = str(result.get("status") or "sync_failed")
+    if status == "completed_sync":
+        changed = result.get("changed") or []
+        _write_hermes_execution_status(
+            status="completed_sync",
+            mission_request_id=mission_request_id,
+            summary=f"Revue indépendante : {len(changed)} item(s) confirmé(s) et synchronisé(s) dans le Build Map.",
+        )
+    elif status in {"no_change", "nothing_to_review"}:
+        _write_hermes_execution_status(
+            status="no_change",
+            mission_request_id=mission_request_id,
+            summary=str(result.get("reason") or "Ce bloc n'a plus d'item Manque à vérifier."),
+        )
+    else:
+        _write_hermes_execution_status(
+            status="sync_failed",
+            mission_request_id=mission_request_id,
+            error=str(result.get("reason") or "Revue indépendante échouée."),
+        )
+
+
+async def _dispatch_reconciliation_review_chat(message: str) -> dict[str, Any]:
+    """Résout le projet/bloc depuis le message (même résolveur que la
+    préparation de mission) et lance la revue indépendante en tâche de
+    fond. Réponse chat immédiate, jamais bloquante."""
+    observe = _hermes_core_observer_api()
+    result = await asyncio.to_thread(
+        observe,
+        PERSONAL_ROOT,
+        raw_request=message,
+        input_mode="text",
+        source="hermes_chat_reconciliation_review",
+        observation_only=True,
+    )
+    request_payload = dict(result.get("current_request") or {})
+    mission = dict(result.get("current_mission") or {})
+    project_context = dict(mission.get("project_context") or {})
+    mission_request_id = str(request_payload.get("request_id") or "")
+    project_id = project_context.get("project_id")
+    block = project_context.get("block")
+    block_payload = dict(block) if isinstance(block, dict) else {}
+    block_num = str(block_payload.get("num") or "")
+    project_root = project_context.get("project_root")
+
+    if not project_id or not block_num or not project_root:
+        return {
+            "reply": (
+                "Je n'ai pas identifié clairement le projet et le bloc à vérifier. "
+                "Précise par exemple : « Hermès, vérifie le bloc 1 du projet ADV »."
+            ),
+            "source": "hermes_reconciliation_review_unresolved",
+            "mission_request_id": mission_request_id,
+        }
+
+    project_name = str(project_context.get("project_name") or project_id)
+    block_name = str(block_payload.get("name") or block_num)
+
+    _write_hermes_execution_status(
+        status="running",
+        mission_request_id=mission_request_id,
+        summary=f"Revue indépendante en cours — {project_name} · bloc {block_name}.",
+    )
+    task = asyncio.create_task(
+        _run_independent_reconciliation_review(
+            project_id=str(project_id),
+            block_num=block_num,
+            project_root=str(project_root),
+            work_context=message,
+            mission_request_id=mission_request_id,
+        )
+    )
+    _HERMES_EXECUTION_TASKS.add(task)
+    task.add_done_callback(_HERMES_EXECUTION_TASKS.discard)
+
+    return {
+        "reply": (
+            f"Revue indépendante lancée — {project_name} · bloc {block_name}. "
+            "Un agent distinct vérifie réellement le code (jamais celui qui a fait le travail). "
+            "Ça peut prendre plusieurs minutes ; le résultat apparaîtra dans « Dernière exécution réelle »."
+        ),
+        "source": "hermes_reconciliation_review_dispatched",
+        "mission_request_id": mission_request_id,
+    }
 
 
 async def _observe_hermes_chat_request(message: str) -> None:
@@ -3972,6 +4117,30 @@ async def hermes_chat(request_body: HermesChatRequest, request: Request):
     config = _hermes_chat_config()
     runtime = _hermes_chat_runtime_summary()
     engine_mode = request_body.engine_mode
+    if _should_dispatch_reconciliation_review(request_body.message):
+        try:
+            dispatched = await _dispatch_reconciliation_review_chat(request_body.message)
+        except Exception:
+            logger.warning("Reconciliation review dispatch failed; falling back to conversation", exc_info=True)
+        else:
+            return {
+                "reply": dispatched["reply"],
+                "engine": "hermes-core",
+                "provider": "hermes-core",
+                "mode": engine_mode,
+                "model": "none",
+                "selection_reason": "Demande de vérification indépendante : revue lancée en tâche de fond.",
+                "used_memory": True,
+                "source": dispatched["source"],
+                "mission_request_id": dispatched["mission_request_id"],
+                "delegation_status": "review_dispatched",
+                "warning": "",
+                "fallback_used": False,
+                "budget": runtime["budget"],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                "estimated_cost_usd": 0.0,
+                "local_limited": False,
+            }
     if _should_prepare_hermes_mission(request_body.message):
         try:
             prepared = await _prepare_hermes_chat_mission_response(request_body.message)
